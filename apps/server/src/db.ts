@@ -1,4 +1,10 @@
-import {Pool} from '@neondatabase/serverless';
+import {Pool, neonConfig} from '@neondatabase/serverless';
+import ws from 'ws';
+
+// Node 24 exposes a native WebSocket implementation, but Neon recommends
+// explicitly supplying the ws constructor for Node applications. This avoids
+// runtime-specific WebSocket failures during local development and production.
+neonConfig.webSocketConstructor = ws;
 
 const url=process.env.DATABASE_URL;
 if(!url)throw new Error('DATABASE_URL is required for the Pro Chat server');
