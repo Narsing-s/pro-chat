@@ -1,12 +1,12 @@
 name: Pro Chat Build
+
 on:
   push:
     branches: [main]
-    tags: ['v*.*.*']
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   verify-server:
@@ -73,75 +73,3 @@ jobs:
           path: apps/web/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
-      - name: Build signed production Android artifacts
-        if: startsWith(github.ref, 'refs/tags/v')
-        working-directory: apps/web/android
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "$ANDROID_KEYSTORE_BASE64" || { echo 'Missing ANDROID_KEYSTORE_BASE64'; exit 1; }
-          test -n "$ANDROID_KEYSTORE_PASSWORD" || { echo 'Missing ANDROID_KEYSTORE_PASSWORD'; exit 1; }
-          test -n "$ANDROID_KEY_ALIAS" || { echo 'Missing ANDROID_KEY_ALIAS'; exit 1; }
-          test -n "$ANDROID_KEY_PASSWORD" || { echo 'Missing ANDROID_KEY_PASSWORD'; exit 1; }
-          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > pro-chat-release.keystore
-          cat >> gradle.properties <<EOF
-          PRO_CHAT_KEYSTORE_FILE=pro-chat-release.keystore
-          PRO_CHAT_KEYSTORE_PASSWORD=$ANDROID_KEYSTORE_PASSWORD
-          PRO_CHAT_KEY_ALIAS=$ANDROID_KEY_ALIAS
-          PRO_CHAT_KEY_PASSWORD=$ANDROID_KEY_PASSWORD
-          EOF
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('app/build.gradle')
-          s=p.read_text()
-          if 'signingConfigs {' not in s:
-              s=s.replace('android {', '''android {
-    signingConfigs {
-        release {
-            storeFile file(project.findProperty("PRO_CHAT_KEYSTORE_FILE"))
-            storePassword project.findProperty("PRO_CHAT_KEYSTORE_PASSWORD")
-            keyAlias project.findProperty("PRO_CHAT_KEY_ALIAS")
-            keyPassword project.findProperty("PRO_CHAT_KEY_PASSWORD")
-        }
-    }''', 1)
-          if 'signingConfig signingConfigs.release' not in s:
-              s=s.replace('buildTypes {', 'buildTypes {\n        release { signingConfig signingConfigs.release }', 1)
-          p.write_text(s)
-          PY
-          ./gradlew bundleRelease assembleRelease --no-daemon
-      - uses: actions/upload-artifact@v4
-        if: startsWith(github.ref, 'refs/tags/v')
-        with:
-          name: pro-chat-android-release
-          path: |
-            apps/web/android/app/build/outputs/apk/release/*.apk
-            apps/web/android/app/build/outputs/bundle/release/*.aab
-          if-no-files-found: error
-          retention-days: 30
-
-  release:
-    needs: [verify-server, web, android]
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v5
-        with:
-          name: pro-chat-android-release
-          path: release
-      - name: Verify production artifacts
-        run: |
-          set -euo pipefail
-          test -n "$(find release -name '*.apk' -print -quit)"
-          test -n "$(find release -name '*.aab' -print -quit)"
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          files: |
-            release/**/*.apk
-            release/**/*.aab
