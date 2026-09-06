@@ -22,14 +22,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
 
       - name: Audit server dependencies
+        working-directory: apps/server
+        run: npm install --ignore-scripts
+
+      - name: Audit server production dependencies
         working-directory: apps/server
         run: npm audit --omit=dev --audit-level=high
