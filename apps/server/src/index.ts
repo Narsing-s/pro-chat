@@ -2,135 +2,79 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import {Server} from 'socket.io';
 import {createServer} from 'node:http';
-import {mkdir,readFile,writeFile} from 'node:fs/promises';
-import {dirname} from 'node:path';
 import {createHmac,randomBytes,randomUUID,scryptSync,timingSafeEqual} from 'node:crypto';
+import {db,initDb,closeDb} from './db.js';
 
 const app=Fastify({logger:true,bodyLimit:256*1024});
 const origin=process.env.WEB_ORIGIN||true;
 await app.register(cors,{origin});
-const DATA=process.env.DATA_FILE||'./data/pro-chat.json';
-const SESSION_SECRET=process.env.SESSION_SECRET||randomBytes(32).toString('hex');
-if(!process.env.SESSION_SECRET)app.log.warn('SESSION_SECRET is not set; sessions will be invalidated on restart. Set one in production.');
+const secret=process.env.SESSION_SECRET;
+if(!secret)throw new Error('SESSION_SECRET is required in production');
+const SESSION_SECRET=secret;
 
 type User={id:string;name:string;createdAt:string;email?:string;phoneNumber?:string;username?:string;passwordHash?:string;online?:boolean};
-type Session={token:string;userId:string;createdAt:string;expiresAt:string};
 type Message={id:string;chatId:string;senderId:string;text:string;createdAt:string;delivered:boolean;read:boolean};
-type ResetToken={token:string;userId:string;expiresAt:string};
-type Store={users:User[];sessions:Session[];messages:Message[];resetTokens:ResetToken[]};
-let store:Store={users:[],sessions:[],messages:[],resetTokens:[]};
-async function persist(){await mkdir(dirname(DATA),{recursive:true});await writeFile(DATA,JSON.stringify(store,null,2))}
-try{const raw=JSON.parse(await readFile(DATA,'utf8'));store={users:raw.users||[],sessions:raw.sessions||[],messages:raw.messages||[],resetTokens:raw.resetTokens||[]}}catch{await persist()}
+const norm=(v:any)=>String(v??'').trim().toLowerCase();
+const phone=(v:any)=>String(v??'').replace(/[\s().-]/g,'').trim();
+const hash=(p:string)=>{const salt=randomBytes(16).toString('hex');return `${salt}:${scryptSync(p,salt,64).toString('hex')}`};
+const check=(p:string,s?:string)=>{try{if(!s)return false;const [salt,h]=s.split(':');const a=scryptSync(p,salt,64),b=Buffer.from(h,'hex');return a.length===b.length&&timingSafeEqual(a,b)}catch{return false}};
+const sign=(v:string)=>createHmac('sha256',SESSION_SECRET).update(v).digest('hex');
+const tokenFor=(id:string)=>{const p=Buffer.from(JSON.stringify({u:id,t:Date.now()})).toString('base64url');return `${p}.${sign(p)}`};
+const verify=(t:string)=>{try{const [p,s]=t.split('.');const e=sign(p);if(!p||!s||s.length!==e.length||!timingSafeEqual(Buffer.from(s),Buffer.from(e)))return null;const x=JSON.parse(Buffer.from(p,'base64url').toString());return Date.now()-Number(x.t)<30*86400000?String(x.u):null}catch{return null}};
+const auth=(req:any)=>{const h=String(req.headers.authorization||'');return h.startsWith('Bearer ')?verify(h.slice(7)):null};
+const publicUser=(u:any,token?:string)=>({id:u.id,name:u.name,email:u.email,phoneNumber:u.phone_number??u.phoneNumber,username:u.username,createdAt:new Date(u.created_at??u.createdAt).toISOString(),online:!!u.online,...token?{token}:{}});
+const chatUsers=(id:string)=>id.split(':');
+const sockets=new Map<string,string>();
 
-const sign=(value:string)=>createHmac('sha256',SESSION_SECRET).update(value).digest('hex');
-const makeToken=(userId:string)=>{const payload=Buffer.from(JSON.stringify({u:userId,t:Date.now()})).toString('base64url');return `${payload}.${sign(payload)}`};
-const verifyToken=(token:string)=>{try{const [payload,signature]=token.split('.');if(!payload||!signature)return null;const expected=sign(payload);if(signature.length!==expected.length||!timingSafeEqual(Buffer.from(signature),Buffer.from(expected)))return null;const data=JSON.parse(Buffer.from(payload,'base64url').toString());if(Date.now()-Number(data.t)>30*86400000)return null;return String(data.u)}catch{return null}};
-const bearer=(req:any)=>{const h=String(req.headers.authorization||'');return h.startsWith('Bearer ')?h.slice(7):''};
-const optionalAuth=(req:any)=>verifyToken(bearer(req));
-const chatUsers=(chatId:string)=>chatId.split(':');
-const userSockets=(userId:string)=>Array.from(sockets.entries()).filter(([,uid])=>uid===userId).map(([sid])=>sid);
-const normalizeEmail=(v:any)=>String(v||'').trim().toLowerCase();
-const normalizePhone=(v:any)=>String(v||'').replace(/\s/g,'').replace(/[().-]/g,'').trim();
-const normalizeUsername=(v:any)=>String(v||'').trim().toLowerCase();
-const normalizeSearch=(v:any)=>String(v||'').trim().toLowerCase();
-const hashPassword=(password:string)=>{const salt=randomBytes(16).toString('hex');return `${salt}:${scryptSync(password,salt,64).toString('hex')}`};
-const checkPassword=(password:string,stored?:string)=>{try{if(!stored)return false;const [salt,hash]=stored.split(':');const actual=scryptSync(password,salt,64);const expected=Buffer.from(hash,'hex');return expected.length===actual.length&&timingSafeEqual(actual,expected)}catch{return false}};
-const publicUser=(u:User,token:string)=>({id:u.id,name:u.name,email:u.email,phoneNumber:u.phoneNumber,username:u.username,createdAt:u.createdAt,online:!!u.online,token});
-const searchUser=(u:User,q:string)=>{const x=normalizeSearch(q);if(!x)return true;const phone=normalizePhone(q);return normalizeUsername(u.username).includes(x)||normalizeSearch(u.name).includes(x)||normalizeEmail(u.email).includes(x)||normalizePhone(u.phoneNumber).includes(phone)};
-
-app.get('/health',async()=>({ok:true,service:'pro-chat',time:new Date().toISOString(),users:store.users.length}));
+await initDb();
+app.get('/health',async()=>({ok:true,service:'pro-chat',database:'neon-postgresql',time:new Date().toISOString()}));
 
 app.post<{Body:{email?:string;phoneNumber?:string;username?:string;password?:string}}>('/api/auth/register',async(req,reply)=>{
-  const email=normalizeEmail(req.body?.email),phoneNumber=normalizePhone(req.body?.phoneNumber),username=normalizeUsername(req.body?.username),password=String(req.body?.password||'');
-  if(!email||!email.includes('@'))return reply.code(400).send({error:'Enter a valid email address'});
-  if(!phoneNumber||phoneNumber.replace(/\D/g,'').length<7)return reply.code(400).send({error:'Enter a valid phone number'});
-  if(!/^[a-z0-9_]{3,30}$/.test(username))return reply.code(400).send({error:'Username must be 3-30 characters using letters, numbers, or underscore'});
-  if(password.length<8)return reply.code(400).send({error:'Password must contain at least 8 characters'});
-  if(store.users.some(u=>normalizeEmail(u.email)===email))return reply.code(409).send({error:'An account already exists with this email'});
-  if(store.users.some(u=>normalizePhone(u.phoneNumber)===phoneNumber))return reply.code(409).send({error:'An account already exists with this phone number'});
-  if(store.users.some(u=>normalizeUsername(u.username)===username))return reply.code(409).send({error:'That username is already taken'});
-  const user:User={id:randomUUID(),name:username,createdAt:new Date().toISOString(),email,phoneNumber,username,passwordHash:hashPassword(password)};
-  store.users.push(user);const token=makeToken(user.id);store.sessions.push({token,userId:user.id,createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+30*86400000).toISOString()});await persist();return publicUser(user,token);
+ const email=norm(req.body?.email),ph=phone(req.body?.phoneNumber),username=norm(req.body?.username),password=String(req.body?.password||'');
+ if(!email.includes('@'))return reply.code(400).send({error:'Enter a valid email address'});
+ if(ph.replace(/\D/g,'').length<7)return reply.code(400).send({error:'Enter a valid phone number'});
+ if(!/^[a-z0-9_]{3,30}$/.test(username))return reply.code(400).send({error:'Username must be 3-30 characters using letters, numbers, or underscore'});
+ if(password.length<8)return reply.code(400).send({error:'Password must contain at least 8 characters'});
+ const du=await db.query('SELECT id FROM pro_chat_users WHERE email=$1 OR phone_number=$2 OR username=$3 LIMIT 1',[email,ph,username]);
+ if(du.rowCount)return reply.code(409).send({error:'An account already exists with that email, phone number, or username'});
+ const id=randomUUID(),created=new Date();
+ await db.query('INSERT INTO pro_chat_users(id,name,created_at,email,phone_number,username,password_hash) VALUES($1,$2,$3,$4,$5,$6,$7)',[id,username,created,email,ph,username,hash(password)]);
+ const token=tokenFor(id);await db.query('INSERT INTO pro_chat_sessions(token,user_id,created_at,expires_at) VALUES($1,$2,$3,$4)',[token,id,created,new Date(Date.now()+30*86400000)]);
+ return {id,name:username,email,phoneNumber:ph,username,createdAt:created.toISOString(),online:false,token};
 });
 
 app.post<{Body:{identifier?:string;password?:string}}>('/api/auth/login',async(req,reply)=>{
-  const identifier=String(req.body?.identifier||'').trim(),password=String(req.body?.password||'');
-  if(!identifier||!password)return reply.code(400).send({error:'Enter your login details'});
-  const email=normalizeEmail(identifier),phone=normalizePhone(identifier),username=normalizeUsername(identifier);
-  const user=store.users.find(u=>normalizeEmail(u.email)===email||normalizePhone(u.phoneNumber)===phone||normalizeUsername(u.username)===username);
-  if(!user||!checkPassword(password,user.passwordHash))return reply.code(401).send({error:'Invalid username, email/phone, or password'});
-  const token=makeToken(user.id);store.sessions.push({token,userId:user.id,createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+30*86400000).toISOString()});await persist();return publicUser(user,token);
+ const id=String(req.body?.identifier||'').trim(),p=String(req.body?.password||'');if(!id||!p)return reply.code(400).send({error:'Enter your login details'});
+ const e=norm(id),ph=phone(id),u=norm(id);const r=await db.query('SELECT * FROM pro_chat_users WHERE email=$1 OR phone_number=$2 OR username=$3 LIMIT 1',[e,ph,u]);const user=r.rows[0];
+ if(!user||!check(p,user.password_hash))return reply.code(401).send({error:'Invalid username, email/phone, or password'});
+ const token=tokenFor(user.id);await db.query('INSERT INTO pro_chat_sessions(token,user_id,created_at,expires_at) VALUES($1,$2,NOW(),NOW()+INTERVAL \'30 days\')',[token,user.id]);return publicUser(user,token);
 });
 
-app.post<{Body:{identifier?:string}}>('/api/auth/forgot-password',async(req,reply)=>{
-  const identifier=String(req.body?.identifier||'').trim();const email=normalizeEmail(identifier),phone=normalizePhone(identifier),username=normalizeUsername(identifier);
-  const user=store.users.find(u=>normalizeEmail(u.email)===email||normalizePhone(u.phoneNumber)===phone||normalizeUsername(u.username)===username);
-  if(user&&user.email){const token=randomBytes(32).toString('hex');store.resetTokens=store.resetTokens.filter(x=>x.userId!==user.id);store.resetTokens.push({token,userId:user.id,expiresAt:new Date(Date.now()+15*60*1000).toISOString()});await persist();
-    if(process.env.RESEND_API_KEY){try{await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${process.env.RESEND_API_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({from:process.env.RESEND_FROM||'Pro Chat <onboarding@resend.dev>',to:[user.email],subject:'Pro Chat password reset',html:`<p>Reset your Pro Chat password:</p><p><a href="${process.env.WEB_ORIGIN||''}/?reset=${token}">Reset password</a></p><p>This link expires in 15 minutes.</p>`})})}catch(e){app.log.error(e)}}
-  }
-  return {message:'If the account exists and has an email address, password reset instructions have been sent.'};
+app.post<{Body:{identifier?:string}}>('/api/auth/forgot-password',async(req)=>{
+ const id=String(req.body?.identifier||'').trim(),r=await db.query('SELECT * FROM pro_chat_users WHERE email=$1 OR phone_number=$2 OR username=$3 LIMIT 1',[norm(id),phone(id),norm(id)]),u=r.rows[0];
+ if(u?.email){const t=randomBytes(32).toString('hex');await db.query('DELETE FROM pro_chat_reset_tokens WHERE user_id=$1',[u.id]);await db.query('INSERT INTO pro_chat_reset_tokens(token,user_id,expires_at) VALUES($1,$2,NOW()+INTERVAL \'15 minutes\')',[t,u.id]);if(process.env.RESEND_API_KEY){try{await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${process.env.RESEND_API_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({from:process.env.RESEND_FROM||'Pro Chat <onboarding@resend.dev>',to:[u.email],subject:'Pro Chat password reset',html:`<p><a href="${process.env.WEB_ORIGIN||''}/?reset=${t}">Reset your Pro Chat password</a></p><p>This link expires in 15 minutes.</p>`})})}catch(e){app.log.error(e)}}}
+ return {message:'If the account exists and has an email address, password reset instructions have been sent.'};
 });
 
-app.post<{Body:{token?:string;password?:string}}>('/api/auth/reset-password',async(req,reply)=>{
-  const token=String(req.body?.token||''),password=String(req.body?.password||'');if(password.length<8)return reply.code(400).send({error:'Password must contain at least 8 characters'});
-  const item=store.resetTokens.find(x=>x.token===token&&new Date(x.expiresAt).getTime()>Date.now());if(!item)return reply.code(400).send({error:'Reset link is invalid or expired'});
-  const user=store.users.find(u=>u.id===item.userId);if(!user)return reply.code(400).send({error:'Account not found'});user.passwordHash=hashPassword(password);store.resetTokens=store.resetTokens.filter(x=>x.token!==token);store.sessions=store.sessions.filter(s=>s.userId!==user.id);await persist();return {ok:true,message:'Password reset successfully'};
-});
+app.post<{Body:{token?:string;password?:string}}>('/api/auth/reset-password',async(req,reply)=>{const t=String(req.body?.token||''),p=String(req.body?.password||'');if(p.length<8)return reply.code(400).send({error:'Password must contain at least 8 characters'});const r=await db.query('SELECT * FROM pro_chat_reset_tokens WHERE token=$1 AND expires_at>NOW()',[t]);if(!r.rowCount)return reply.code(400).send({error:'Reset link is invalid or expired'});const u=r.rows[0];await db.query('UPDATE pro_chat_users SET password_hash=$1 WHERE id=$2',[hash(p),u.user_id]);await db.query('DELETE FROM pro_chat_sessions WHERE user_id=$1',[u.user_id]);await db.query('DELETE FROM pro_chat_reset_tokens WHERE token=$1',[t]);return {ok:true,message:'Password reset successfully'}});
 
-app.post<{Body:{id?:string;name?:string}}>('/api/users',async(req,reply)=>{
-  const name=String(req.body?.name||'').trim().slice(0,40);if(name.length<2)return reply.code(400).send({error:'Name must contain at least 2 characters'});
-  const authenticated=optionalAuth(req);let user=authenticated?store.users.find(u=>u.id===authenticated):undefined;
-  if(req.body?.id&&(!authenticated||req.body.id!==authenticated))user=store.users.find(u=>u.id===req.body?.id);
-  if(!user){user={id:randomUUID(),name,createdAt:new Date().toISOString()};store.users.push(user)}else user.name=name;
-  const token=makeToken(user.id);store.sessions=store.sessions.filter(s=>s.userId!==user!.id);store.sessions.push({token,userId:user.id,createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+30*86400000).toISOString()});await persist();
-  return {...user,token};
-});
-app.post('/api/session',async(req:any,reply)=>{const userId=optionalAuth(req);if(!userId)return reply.code(401).send({error:'Authentication required'});const u=store.users.find(x=>x.id===userId);if(!u)return reply.code(401).send({error:'User not found'});const token=makeToken(userId);store.sessions.push({token,userId,createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+30*86400000).toISOString()});await persist();return {...u,token}});
+app.post('/api/session',async(req:any,reply)=>{const id=auth(req);if(!id)return reply.code(401).send({error:'Authentication required'});const r=await db.query('SELECT * FROM pro_chat_users WHERE id=$1',[id]);if(!r.rowCount)return reply.code(401).send({error:'User not found'});const t=tokenFor(id);await db.query('INSERT INTO pro_chat_sessions(token,user_id,created_at,expires_at) VALUES($1,$2,NOW(),NOW()+INTERVAL \'30 days\')',[t,id]);return publicUser(r.rows[0],t)});
 
-// Global user directory: search by username, display name, email, or phone.
-// Exact username/email/phone matches are included, and partial matches are supported for discovery.
-app.get('/api/users',async(req:any,reply)=>{
-  const userId=optionalAuth(req);
-  const q=String(req.query?.q||'').trim();
-  if(q.length>100)return reply.code(400).send({error:'Search text is too long'});
-  const users=store.users
-    .filter(u=>u.id!==userId)
-    .filter(u=>searchUser(u,q))
-    .sort((a,b)=>{
-      const x=normalizeSearch(q),au=normalizeUsername(a.username),bu=normalizeUsername(b.username);
-      const ar=au===x?0:au.startsWith(x)?1:2,br=bu===x?0:bu.startsWith(x)?1:2;
-      return ar-br||a.name.localeCompare(b.name);
-    })
-    .slice(0,50)
-    .map(u=>({id:u.id,name:u.name,email:u.email,phoneNumber:u.phoneNumber,username:u.username,createdAt:u.createdAt,online:!!u.online}));
-  return users;
-});
-app.get<{Params:{chatId:string}}>('/api/messages/:chatId',async req=>store.messages.filter(m=>m.chatId===req.params.chatId).slice(-200));
+app.get('/api/users',async(req:any,reply)=>{const me=auth(req),q=norm(req.query?.q||'');if(q.length>100)return reply.code(400).send({error:'Search text is too long'});const p=phone(q);const r=await db.query(`SELECT id,name,email,phone_number,username,created_at,online FROM pro_chat_users WHERE id<>$1 AND ($2='' OR LOWER(username) LIKE $3 OR LOWER(name) LIKE $3 OR LOWER(email) LIKE $3 OR phone_number LIKE $4) ORDER BY CASE WHEN LOWER(username)=$2 THEN 0 WHEN LOWER(username) LIKE $5 THEN 1 ELSE 2 END,name LIMIT 50`,[me||'',q,`%${q}%`,`%${p}%`,`${q}%`]);return r.rows.map(x=>publicUser(x));});
+
+app.get<{Params:{chatId:string}}>('/api/messages/:chatId',async(req)=>{const r=await db.query('SELECT id,chat_id AS "chatId",sender_id AS "senderId",text,created_at AS "createdAt",delivered,read FROM pro_chat_messages WHERE chat_id=$1 ORDER BY created_at ASC LIMIT 200',[req.params.chatId]);return r.rows});
 
 const http=createServer(app.server);const io=new Server(http,{cors:{origin,methods:['GET','POST']},maxHttpBufferSize:256*1024});
-const sockets=new Map<string,string>();
-
 io.on('connection',socket=>{
-  const token=String(socket.handshake.auth?.token||'');const verified=verifyToken(token);let connectionUser=verified;
-  socket.on('presence:join',async(userId:string)=>{
-    if(!connectionUser)connectionUser=userId;if(connectionUser!==userId)return;socket.data.userId=userId;sockets.set(socket.id,userId);const u=store.users.find(x=>x.id===userId);if(!u)return;u.online=true;await persist();io.emit('presence:update',{userId,online:true});
-    const pending=store.messages.filter(m=>!m.delivered&&chatUsers(m.chatId).includes(userId)&&m.senderId!==userId);
-    for(const m of pending){m.delivered=true;for(const sid of userSockets(userId))io.to(sid).emit('message:new',m);for(const sid of userSockets(m.senderId))io.to(sid).emit('message:delivered',{messageId:m.id})}if(pending.length)await persist();
-  });
-  socket.on('chat:join',(chatId:string)=>{const userId=socket.data.userId;if(userId&&chatUsers(chatId).includes(userId))socket.join(`chat:${chatId}`)});
-  socket.on('message:send',async(input:Partial<Message>,ack?:(r:any)=>void)=>{
-    const userId=socket.data.userId||input.senderId;if(!input?.chatId||!userId||input.senderId!==userId||!input.text?.trim())return ack?.({ok:false,error:'Invalid message'});
-    const participants=chatUsers(input.chatId);if(participants.length!==2||!participants.includes(userId))return ack?.({ok:false,error:'Invalid conversation'});
-    const message:Message={id:input.id||randomUUID(),chatId:input.chatId,senderId:userId,text:String(input.text).trim().slice(0,10000),createdAt:input.createdAt||new Date().toISOString(),delivered:false,read:false};
-    const existing=store.messages.find(m=>m.id===message.id);if(existing)return ack?.({ok:true,message:existing});
-    const recipientId=participants.find(id=>id!==userId)!;const recipientSockets=userSockets(recipientId);message.delivered=recipientSockets.length>0;store.messages.push(message);await persist();
-    for(const sid of userSockets(userId))io.to(sid).emit('message:new',message);for(const sid of recipientSockets)io.to(sid).emit('message:new',message);if(message.delivered)for(const sid of userSockets(userId))io.to(sid).emit('message:delivered',{messageId:message.id});ack?.({ok:true,message});
-  });
-  socket.on('message:read',async({chatId,messageId,userId})=>{if(userId!==socket.data.userId||!chatId)return;const changed:Message[]=[];for(const m of store.messages){if(m.chatId===chatId&&m.senderId!==userId&&!m.read&&(!messageId||m.id===messageId)){m.read=true;changed.push(m)}}if(!changed.length)return;await persist();for(const m of changed)for(const sid of userSockets(m.senderId))io.to(sid).emit('message:read',{chatId,messageId:m.id})});
-  socket.on('typing',({chatId,typing})=>{const userId=socket.data.userId;if(userId&&chatUsers(chatId).includes(userId))socket.to(`chat:${chatId}`).emit('typing',{userId,typing:!!typing})});
-  socket.on('call:signal',({targetUserId,...payload})=>{const senderUserId=socket.data.userId;if(!senderUserId||!targetUserId||targetUserId===senderUserId)return;for(const sid of userSockets(targetUserId))io.to(sid).emit('call:signal',{...payload,senderUserId})});
-  socket.on('disconnect',async()=>{const userId=socket.data.userId;sockets.delete(socket.id);if(userId&&!Array.from(sockets.values()).includes(userId)){const u=store.users.find(x=>x.id===userId);if(u){u.online=false;await persist()}io.emit('presence:update',{userId,online:false})}});
+ let uid=verify(String(socket.handshake.auth?.token||''));
+ socket.on('presence:join',async(id:string)=>{if(!uid)uid=id;if(uid!==id)return;socket.data.userId=uid;sockets.set(socket.id,uid);await db.query('UPDATE pro_chat_users SET online=true WHERE id=$1',[uid]);io.emit('presence:update',{userId:uid,online:true});});
+ socket.on('chat:join',(chatId:string)=>{const id=socket.data.userId;if(id&&chatUsers(chatId).includes(id))socket.join(`chat:${chatId}`)});
+ socket.on('message:send',async(input:any,ack?:Function)=>{try{const id=socket.data.userId||input.senderId;if(!id||input.senderId!==id||!input.chatId||!String(input.text||'').trim())return ack?.({ok:false,error:'Invalid message'});const parts=chatUsers(input.chatId);if(parts.length!==2||!parts.includes(id))return ack?.({ok:false,error:'Invalid conversation'});const msg={id:String(input.id||randomUUID()),chatId:input.chatId,senderId:id,text:String(input.text).trim().slice(0,10000),createdAt:input.createdAt||new Date().toISOString(),delivered:Array.from(sockets.values()).includes(parts.find(x=>x!==id)!),read:false};const ex=await db.query('SELECT id,chat_id AS "chatId",sender_id AS "senderId",text,created_at AS "createdAt",delivered,read FROM pro_chat_messages WHERE id=$1',[msg.id]);if(ex.rowCount)return ack?.({ok:true,message:ex.rows[0]});await db.query('INSERT INTO pro_chat_messages(id,chat_id,sender_id,text,created_at,delivered,read) VALUES($1,$2,$3,$4,$5,$6,false)',[msg.id,msg.chatId,msg.senderId,msg.text,msg.createdAt,msg.delivered]);const saved={...msg};for(const sid of Array.from(sockets.entries()).filter(([,u])=>parts.includes(u)).map(([s])=>s))io.to(sid).emit('message:new',saved);return ack?.({ok:true,message:saved})}catch(e){app.log.error(e);ack?.({ok:false,error:'Message could not be saved'})}});
+ socket.on('message:read',async({chatId,messageId,userId}:any)=>{if(userId!==socket.data.userId)return;await db.query('UPDATE pro_chat_messages SET read=true WHERE chat_id=$1 AND sender_id<>$2 AND ($3='' OR id=$3)',[chatId,userId,messageId||'']);});
+ socket.on('disconnect',async()=>{const id=socket.data.userId;sockets.delete(socket.id);if(id&&!Array.from(sockets.values()).includes(id)){await db.query('UPDATE pro_chat_users SET online=false WHERE id=$1',[id]);io.emit('presence:update',{userId:id,online:false})}});
 });
 
-setInterval(async()=>{const now=Date.now();const before=store.sessions.length;store.sessions=store.sessions.filter(s=>new Date(s.expiresAt).getTime()>now);store.resetTokens=store.resetTokens.filter(s=>new Date(s.expiresAt).getTime()>now);if(before!==store.sessions.length)await persist()},6*60*60*1000).unref();
+setInterval(()=>db.query('DELETE FROM pro_chat_sessions WHERE expires_at<NOW(); DELETE FROM pro_chat_reset_tokens WHERE expires_at<NOW();').catch(e=>app.log.error(e)),6*60*60*1000).unref();
 const port=Number(process.env.PORT||3000);http.listen({port,host:'0.0.0.0'},()=>app.log.info(`Pro Chat server listening on ${port}`));
+process.on('SIGTERM',async()=>{await closeDb();process.exit(0)});
+process.on('SIGINT',async()=>{await closeDb();process.exit(0)});
