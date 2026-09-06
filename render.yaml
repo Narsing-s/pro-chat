@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: pro-chat-api
+    runtime: node
+    rootDir: apps/server
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: WEB_ORIGIN
+        value: https://narsing-s.github.io/pro-chat/
