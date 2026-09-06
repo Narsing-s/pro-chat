@@ -22,47 +22,76 @@
 
   function saveUser(user) {
     localStorage.setItem('pro-chat-user-v3', JSON.stringify(user));
-    location.reload();
+    location.href = location.pathname;
   }
 
   function mount() {
     if (document.querySelector('.pro-auth-overlay')) return;
+    const params = new URLSearchParams(location.search);
+    const resetToken = params.get('reset');
     const existing = (() => { try { return JSON.parse(localStorage.getItem('pro-chat-user-v3')); } catch { return null; } })();
-    if (existing?.token) return;
+    if (existing?.token && !resetToken) return;
+
     const overlay = document.createElement('div');
     overlay.className = 'pro-auth-overlay';
-    overlay.innerHTML = `<div class="pro-auth-card"><div class="pro-auth-logo">P</div><h1>Welcome to Pro Chat</h1><p id="pro-auth-sub">Create your account to start messaging.</p><div id="pro-auth-fields"></div><div class="pro-auth-error" id="pro-auth-msg"></div><button class="pro-auth-primary" id="pro-auth-submit">Create Account</button><button class="pro-auth-switch" id="pro-auth-switch">Already have an account? Login</button><button class="pro-auth-forgot" id="pro-auth-forgot">Forgot Password?</button><div class="pro-auth-note">Your password is securely hashed on the server. You can use your username, email, or phone number to log in.</div></div>`;
+    overlay.innerHTML = `<div class="pro-auth-card"><div class="pro-auth-logo">P</div><h1 id="pro-auth-title">Welcome to Pro Chat</h1><p id="pro-auth-sub">Create your account to start messaging.</p><div id="pro-auth-fields"></div><div class="pro-auth-error" id="pro-auth-msg"></div><button class="pro-auth-primary" id="pro-auth-submit">Create Account</button><button class="pro-auth-switch" id="pro-auth-switch">Already have an account? Login</button><button class="pro-auth-forgot" id="pro-auth-forgot">Forgot Password?</button><div class="pro-auth-note">Your password is securely hashed on the server. You can use your username, email, or phone number to log in.</div></div>`;
     document.body.appendChild(overlay);
-    const fields = overlay.querySelector('#pro-auth-fields'), submit = overlay.querySelector('#pro-auth-submit'), sw = overlay.querySelector('#pro-auth-switch'), forgot = overlay.querySelector('#pro-auth-forgot'), msg = overlay.querySelector('#pro-auth-msg'), sub = overlay.querySelector('#pro-auth-sub');
+
+    const fields = overlay.querySelector('#pro-auth-fields'), submit = overlay.querySelector('#pro-auth-submit'), sw = overlay.querySelector('#pro-auth-switch'), forgot = overlay.querySelector('#pro-auth-forgot'), msg = overlay.querySelector('#pro-auth-msg'), sub = overlay.querySelector('#pro-auth-sub'), title = overlay.querySelector('#pro-auth-title');
     let register = true;
-    const input = (id,label,type,placeholder) => `<label for="${id}">${label}</label><input id="${id}" type="${type}" placeholder="${placeholder}" autocomplete="${type==='password'?'new-password':'on'}">`;
+    let resetMode = Boolean(resetToken);
+    const input = (id,label,type,placeholder,autocomplete='on') => `<label for="${id}">${label}</label><input id="${id}" type="${type}" placeholder="${placeholder}" autocomplete="${autocomplete}">`;
+
     function render() {
       msg.textContent=''; msg.className='pro-auth-error';
-      if (register) {
+      if (resetMode) {
+        title.textContent='Reset your password';
+        sub.textContent='Choose a new password for your Pro Chat account.';
+        fields.innerHTML = input('password','New password','password','At least 8 characters','new-password') + input('confirm','Confirm password','password','Re-enter your new password','new-password');
+        submit.textContent='Reset Password'; sw.textContent='Back to Login'; sw.style.display='block'; forgot.style.display='none';
+      } else if (register) {
+        title.textContent='Welcome to Pro Chat';
         sub.textContent='Create your account to start messaging.';
-        fields.innerHTML = input('email','Email','email','you@example.com') + input('phone','Phone number','tel','+91 9876543210') + input('username','Username','text','Choose a username') + input('password','Password','password','Create a password') + input('confirm','Confirm password','password','Re-enter your password');
-        submit.textContent='Create Account'; sw.textContent='Already have an account? Login'; forgot.style.display='none';
+        fields.innerHTML = input('email','Email','email','you@example.com') + input('phone','Phone number','tel','+91 9876543210') + input('username','Username','text','Choose a username') + input('password','Password','password','Create a password','new-password') + input('confirm','Confirm password','password','Re-enter your password','new-password');
+        submit.textContent='Create Account'; sw.textContent='Already have an account? Login'; sw.style.display='block'; forgot.style.display='none';
       } else {
+        title.textContent='Welcome back';
         sub.textContent='Login with your username, email, or phone number.';
-        fields.innerHTML = input('identifier','Username, Email or Phone','text','Username / email / phone') + input('password','Password','password','Your password');
-        submit.textContent='Login'; sw.textContent='New to Pro Chat? Create Account'; forgot.style.display='block';
+        fields.innerHTML = input('identifier','Username, Email or Phone','text','Username / email / phone') + input('password','Password','password','Your password','current-password');
+        submit.textContent='Login'; sw.textContent='New to Pro Chat? Create Account'; sw.style.display='block'; forgot.style.display='block';
       }
     }
+
     render();
-    sw.onclick=()=>{register=!register;render()};
+    sw.onclick=()=>{
+      if(resetMode){ resetMode=false; register=false; history.replaceState({},'',location.pathname); render(); return; }
+      register=!register; render();
+    };
     forgot.onclick=async()=>{
       const identifier=fields.querySelector('#identifier')?.value.trim();
       if(!identifier){msg.textContent='Enter your email, username, or phone number first.';return;}
-      try{const d=await request('/api/auth/forgot-password',{identifier});msg.textContent=d.message||'If the account exists, password reset instructions have been requested.';msg.className='pro-auth-error pro-auth-success'}catch(e){msg.textContent=e.message}
+      forgot.disabled=true;
+      try{const d=await request('/api/auth/forgot-password',{identifier});msg.textContent=d.message||'If the account exists, password reset instructions have been requested.';msg.className='pro-auth-error pro-auth-success'}catch(e){msg.textContent=e.message}finally{forgot.disabled=false}
     };
     submit.onclick=async()=>{
-      msg.textContent='';submit.disabled=true;
+      msg.textContent=''; submit.disabled=true;
       try {
         let user;
+        if(resetMode){
+          const password=fields.querySelector('#password').value, confirm=fields.querySelector('#confirm').value;
+          if(!password||!confirm) throw Error('Please fill in both password fields.');
+          if(password!==confirm) throw Error('Passwords do not match.');
+          if(password.length<8) throw Error('Password must be at least 8 characters.');
+          await request('/api/auth/reset-password',{token:resetToken,password});
+          resetMode=false; register=false; history.replaceState({},'',location.pathname); render();
+          msg.textContent='Password reset successfully. Please login with your new password.'; msg.className='pro-auth-error pro-auth-success';
+          return;
+        }
         if(register){
           const email=fields.querySelector('#email').value.trim(),phoneNumber=fields.querySelector('#phone').value.trim(),username=fields.querySelector('#username').value.trim(),password=fields.querySelector('#password').value,confirm=fields.querySelector('#confirm').value;
           if(!email||!phoneNumber||!username||!password||!confirm) throw Error('Please fill in all fields.');
           if(password!==confirm) throw Error('Passwords do not match.');
+          if(password.length<8) throw Error('Password must be at least 8 characters.');
           user=await request('/api/auth/register',{email,phoneNumber,username,password});
         } else {
           const identifier=fields.querySelector('#identifier').value.trim(),password=fields.querySelector('#password').value;
