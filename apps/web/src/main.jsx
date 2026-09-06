@@ -4,7 +4,7 @@ import {io} from 'socket.io-client';
 import {MessageCircle,Search,Plus,Send,Wifi,WifiOff,Phone,Video,MoreVertical,Check,CheckCheck,Users,LogOut,Mic,MicOff,Camera,CameraOff,PhoneOff} from 'lucide-react';
 import './styles.css';
 
-const API=import.meta.env.VITE_API_URL||(location.protocol.startsWith('http')?location.origin:'http://localhost:3000');
+const API=import.meta.env.VITE_API_URL||( ['localhost','127.0.0.1','0.0.0.0'].includes(location.hostname) ? 'http://localhost:3000' : (location.protocol.startsWith('http')?location.origin:'http://localhost:3000') );
 const USER_KEY='pro-chat-user-v3',CHATS_KEY='pro-chat-chats-v3',MSG_KEY='pro-chat-messages-v3',OUTBOX_KEY='pro-chat-outbox-v1';
 const cid=(a,b)=>[a,b].sort().join(':');
 const read=(k,f)=>{try{return JSON.parse(localStorage.getItem(k))??f}catch{return f}};
