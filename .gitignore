@@ -1,0 +1,11 @@
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.env
+.env.*
+!.env.example
+apps/web/android/.gradle/
+apps/web/android/build/
+apps/web/android/app/build/
+.DS_Store
