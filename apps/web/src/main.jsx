@@ -5,9 +5,10 @@ import './styles.css';
 
 const isLocalHost=['localhost','127.0.0.1','0.0.0.0'].includes(location.hostname);
 const isGitHubPages=/\.github\.io$/i.test(location.hostname);
-const LOCAL_MODE=isGitHubPages;
-const API=import.meta.env.VITE_API_URL||window.__PRO_CHAT_API__||(isLocalHost?'http://localhost:3000':location.origin);
-const USER_KEY='pro-chat-user-v3',CHATS_KEY='pro-chat-chats-v3',MSG_KEY='pro-chat-messages-v3',OUTBOX_KEY='pro-chat-outbox-v1',ACCOUNTS_KEY='pro-chat-local-accounts-v2';
+const CONFIG_API=import.meta.env.VITE_API_URL||window.__PRO_CHAT_API__||'';
+const LOCAL_MODE=isGitHubPages&&!CONFIG_API;
+const API=CONFIG_API||(isLocalHost?'http://localhost:3000':location.origin);
+const USER_KEY='pro-chat-user-v3',CHATS_KEY='pro-chat-chats-v3',MSG_KEY='pro-chat-messages-v3',OUTBOX_KEY='pro-chat-outbox-v1';
 const cid=(a,b)=>[a,b].sort().join(':');
 const read=(k,f)=>{try{return JSON.parse(localStorage.getItem(k))??f}catch{return f}};
 if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
@@ -37,11 +38,7 @@ function App(){
  async function find(q=search){
    const v=q.trim();setSearchError('');if(!v){setResults([]);return}setSearching(true);
    try{
-     if(LOCAL_MODE){
-       const accounts=read(ACCOUNTS_KEY,[]);const n=v.toLowerCase();const p=v.replace(/[\s().-]/g,'');
-       const users=accounts.filter(u=>u.id!==me.id&&(String(u.username||'').toLowerCase().includes(n)||String(u.email||'').toLowerCase().includes(n)||String(u.phoneNumber||'').replace(/[\s().-]/g,'').includes(p))).slice(0,20);
-       setResults(users);if(!users.length)setSearchError('No account found on this device.');return;
-     }
+     if(LOCAL_MODE){setResults([]);setSearchError('Configure the Pro Chat API URL for account search and messaging.');return}
      const r=await fetch(`${API}/api/users?q=${encodeURIComponent(v)}`,{headers:{Authorization:`Bearer ${me.token}`},cache:'no-store'});const d=await r.json().catch(()=>[]);if(!r.ok)throw Error(d.error||`Search failed (${r.status})`);const users=Array.isArray(d)?d.filter(u=>u.id!==me.id):[];setResults(users);if(!users.length)setSearchError('No user found. Try the exact username, email or phone number.')
    }catch(e){setResults([]);setSearchError(e.message==='Failed to fetch'||e.name==='TypeError'?'Cannot reach the Pro Chat server.':e.message||'Unable to search users.')}finally{setSearching(false)}
  }
