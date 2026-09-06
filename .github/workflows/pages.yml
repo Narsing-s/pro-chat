@@ -26,7 +26,11 @@ jobs:
           node-version: 22
       - name: Write public API runtime config
         run: |
-          printf '%s\n' "window.__PRO_CHAT_API__=${VITE_API_URL:+JSON.stringify('$VITE_API_URL')} || '';" > apps/web/public/runtime-config.js
+          if [ -n "$VITE_API_URL" ]; then
+            printf 'window.__PRO_CHAT_API__=%s;\n' "$(printf '%s' "$VITE_API_URL" | python -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" > apps/web/public/runtime-config.js
+          else
+            printf 'window.__PRO_CHAT_API__="";\n' > apps/web/public/runtime-config.js
+          fi
       - run: npm install
       - run: npm run build -w apps/web
       - uses: actions/upload-pages-artifact@v4
