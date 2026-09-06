@@ -6,6 +6,10 @@ services:
     restart: unless-stopped
     environment:
       PORT: 3000
+      DATA_FILE: /app/data/pro-chat.json
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:8080}
+    volumes:
+      - prochat-data:/app/data
     ports:
       - "3000:3000"
   web:
@@ -17,3 +21,5 @@ services:
       - "8080:80"
     depends_on:
       - api
+volumes:
+  prochat-data:
