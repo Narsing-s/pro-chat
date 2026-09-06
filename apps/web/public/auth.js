@@ -1,10 +1,10 @@
 (() => {
 const USER_KEY='pro-chat-user-v3';
 const isViteDev=location.port==='5173'||location.port==='4173';
-const configuredApi=window.__PRO_CHAT_API__||'';
+const configuredApi=window.__PRO_CHAT_API__||'https://p01--combined-service--dlnqhspm7dfs.code.run';
 const isLocalHost=['localhost','127.0.0.1','0.0.0.0'].includes(location.hostname);
 const localApiHost=location.hostname==='0.0.0.0'?'localhost':location.hostname;
-const API=configuredApi||(isViteDev?'':(isLocalHost?`http://${localApiHost}:3000`:location.origin));
+const API=window.__PRO_CHAT_API__||(isViteDev?'':(isLocalHost?`http://${localApiHost}:3000`:configuredApi));
 const originalFetch=window.fetch.bind(window);
 const request=async(path,body)=>{let response;try{response=await originalFetch(`${API}${path}`,{method:'POST',headers:{'content-type':'application/json'},credentials:'include',body:JSON.stringify(body),cache:'no-store'})}catch{throw Error('SERVER_UNAVAILABLE')}const data=await response.json().catch(()=>({}));if(!response.ok){const error=Error(data.error||`Request failed (${response.status})`);Object.assign(error,data,{status:response.status});throw error}return data};
 const saveUser=user=>{if(!user?.id)throw Error('Server did not return a valid account.');localStorage.setItem(USER_KEY,JSON.stringify(user));location.replace(location.pathname)};
