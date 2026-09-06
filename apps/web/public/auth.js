@@ -1,8 +1,8 @@
 (() => {
-  const API = window.location.origin;
+  const API = window.__PRO_CHAT_API__ || window.location.origin;
   const style = document.createElement('style');
   style.textContent = `
-    .pro-auth-overlay{position:fixed;inset:0;z-index:99999;display:grid;place-items:center;background:linear-gradient(135deg,#07111f,#101b35);padding:20px;font-family:system-ui,-apple-system,sans-serif}
+    .pro-auth-overlay{position:fixed;inset:0;z-index:99999;display:grid;place-items:center;background:radial-gradient(circle at 20% 10%,#173b70 0,#07111f 38%,#050811 100%);padding:20px;font-family:system-ui,-apple-system,sans-serif}
     .pro-auth-card{width:min(420px,100%);background:#fff;border-radius:24px;padding:30px;box-shadow:0 24px 80px #0008;color:#101828}
     .pro-auth-logo{width:54px;height:54px;border-radius:16px;display:grid;place-items:center;background:#111827;color:#fff;font-size:26px;font-weight:800;margin-bottom:16px}
     .pro-auth-card h1{margin:0 0 6px;font-size:28px}.pro-auth-card p{margin:0 0 22px;color:#667085}
@@ -52,7 +52,7 @@
       } else if (register) {
         title.textContent='Welcome to Pro Chat';
         sub.textContent='Create your account to start messaging.';
-        fields.innerHTML = input('email','Email','email','you@example.com') + input('phone','Phone number','tel','+91 9876543210') + input('username','Username','text','Choose a username') + input('password','Password','password','Create a password','new-password') + input('confirm','Confirm password','password','Re-enter your password','new-password');
+        fields.innerHTML = input('email','Email','email','you@example.com') + input('phone','Phone number','tel','+1 555 123 4567') + input('username','Username','text','Choose a username') + input('password','Password','password','Create a password','new-password') + input('confirm','Confirm password','password','Re-enter your password','new-password');
         submit.textContent='Create Account'; sw.textContent='Already have an account? Login'; sw.style.display='block'; forgot.style.display='none';
       } else {
         title.textContent='Welcome back';
