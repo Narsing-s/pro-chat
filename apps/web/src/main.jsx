@@ -1,13 +1,12 @@
 import React,{useEffect,useRef,useState} from 'react';
 import {createRoot} from 'react-dom/client';
-import {io} from 'socket.io-client';
 import {MessageCircle,Search,Send,Phone,Video,MoreVertical,Check,CheckCheck,LogOut,Star,Archive,Settings,Shield,User,ChevronDown,ChevronLeft,X} from 'lucide-react';
 import './styles.css';
 
 const isLocalHost=['localhost','127.0.0.1','0.0.0.0'].includes(location.hostname);
 const isGitHubPages=/\.github\.io$/i.test(location.hostname);
 const LOCAL_MODE=isGitHubPages;
-const API=import.meta.env.VITE_API_URL||(isLocalHost?'http://localhost:3000':location.origin);
+const API=import.meta.env.VITE_API_URL||window.__PRO_CHAT_API__||(isLocalHost?'http://localhost:3000':location.origin);
 const USER_KEY='pro-chat-user-v3',CHATS_KEY='pro-chat-chats-v3',MSG_KEY='pro-chat-messages-v3',OUTBOX_KEY='pro-chat-outbox-v1',ACCOUNTS_KEY='pro-chat-local-accounts-v2';
 const cid=(a,b)=>[a,b].sort().join(':');
 const read=(k,f)=>{try{return JSON.parse(localStorage.getItem(k))??f}catch{return f}};
@@ -24,9 +23,15 @@ function App(){
  useEffect(()=>localStorage.setItem(MSG_KEY,JSON.stringify(messages)),[messages]);
  useEffect(()=>{
    if(!me?.token||LOCAL_MODE)return;
-   const s=io(API,{auth:{token:me.token},transports:['websocket','polling'],reconnection:true});socketRef.current=s;
-   s.on('connect',()=>{read(OUTBOX_KEY,[]).forEach(m=>s.emit('message',m));localStorage.setItem(OUTBOX_KEY,'[]')});
-   s.on('message',receive);s.on('message:ack',receive);return()=>s.disconnect()
+   let disposed=false;
+   import('socket.io-client').then(({io})=>{
+     if(disposed)return;
+     const s=io(API,{auth:{token:me.token},transports:['websocket','polling'],reconnection:true});
+     socketRef.current=s;
+     s.on('connect',()=>{read(OUTBOX_KEY,[]).forEach(m=>s.emit('message:send',m));localStorage.setItem(OUTBOX_KEY,'[]')});
+     s.on('message:new',receive);s.on('message:ack',receive);
+   }).catch(()=>{});
+   return()=>{disposed=true;socketRef.current?.disconnect();socketRef.current=null}
  },[me?.token]);
  function receive(m){if(!m?.chatId||!m?.id)return;setMessages(p=>({...p,[m.chatId]:[...(p[m.chatId]||[]).filter(x=>x.id!==m.id),m].sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt))}));setChats(p=>p.map(c=>c.id===m.chatId?{...c,lastMessage:m.text,lastAt:m.createdAt}:c))}
  async function find(q=search){
@@ -45,16 +50,16 @@ function App(){
    if(!u?.id||u.id===me.id)return;const id=cid(me.id,u.id);activateChat(id);
    setChats(p=>p.some(c=>c.id===id)?p:p.concat([{id,userId:u.id,name:u.name||u.username||'Contact',username:u.username||'',email:u.email||'',phoneNumber:u.phoneNumber||'',lastMessage:'',lastAt:u.createdAt||new Date().toISOString(),favorite:false,archived:false}]));
    if(LOCAL_MODE)return;
-   socketRef.current?.emit('join',id);
+   socketRef.current?.emit('chat:join',id);
    try{const r=await fetch(`${API}/api/messages/${encodeURIComponent(id)}`,{headers:{Authorization:`Bearer ${me.token}`},cache:'no-store'});if(r.ok){const d=await r.json();setMessages(p=>({...p,[id]:Array.isArray(d)?d:[]}))}}catch{}
  }
- function openChat(c){if(!c?.id)return;activateChat(c.id);if(!LOCAL_MODE)socketRef.current?.emit('join',c.id)}
+ function openChat(c){if(!c?.id)return;activateChat(c.id);if(!LOCAL_MODE)socketRef.current?.emit('chat:join',c.id)}
  function toggleFavorite(id){setChats(p=>p.map(c=>c.id===id?{...c,favorite:!c.favorite}:c))}
  function toggleArchive(id){setChats(p=>p.map(c=>c.id===id?{...c,archived:!c.archived}:c));setChatMenu(false);if(folder==='archived'&&active===id)setActive(null)}
  function send(){
    const v=text.trim(),c=chats.find(x=>x.id===active);if(!v||!c)return;
    const m={id:crypto.randomUUID(),chatId:active,senderId:me.id,senderName:me.name,senderUsername:me.username,receiverId:c.userId,text:v,createdAt:new Date().toISOString(),status:'sent'};
-   receive(m);setText('');if(LOCAL_MODE)return;if(socketRef.current?.connected)socketRef.current.emit('message',m);else{const q=read(OUTBOX_KEY,[]);q.push(m);localStorage.setItem(OUTBOX_KEY,JSON.stringify(q))}
+   receive(m);setText('');if(LOCAL_MODE)return;if(socketRef.current?.connected)socketRef.current.emit('message:send',m);else{const q=read(OUTBOX_KEY,[]);q.push(m);localStorage.setItem(OUTBOX_KEY,JSON.stringify(q))}
  }
  function logout(){localStorage.removeItem(USER_KEY);location.replace(location.pathname)}
  if(!me)return null;
