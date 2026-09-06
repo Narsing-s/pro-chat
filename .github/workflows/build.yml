@@ -8,6 +8,9 @@ on:
 permissions:
   contents: read
 
+env:
+  VITE_API_URL: ${{ vars.PRO_CHAT_API_URL }}
+
 jobs:
   verify-server:
     runs-on: ubuntu-latest
@@ -26,6 +29,13 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+      - name: Write public API runtime config
+        run: |
+          if [ -n "$VITE_API_URL" ]; then
+            printf 'window.__PRO_CHAT_API__=%s;\n' "$(printf '%s' "$VITE_API_URL" | python -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" > apps/web/public/runtime-config.js
+          else
+            printf 'window.__PRO_CHAT_API__="";\n' > apps/web/public/runtime-config.js
+          fi
       - run: npm install
       - run: npm run build -w apps/web
       - uses: actions/upload-artifact@v4
@@ -42,6 +52,13 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+      - name: Write public API runtime config
+        run: |
+          if [ -n "$VITE_API_URL" ]; then
+            printf 'window.__PRO_CHAT_API__=%s;\n' "$(printf '%s' "$VITE_API_URL" | python -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" > apps/web/public/runtime-config.js
+          else
+            printf 'window.__PRO_CHAT_API__="";\n' > apps/web/public/runtime-config.js
+          fi
       - run: npm install
       - run: npm run build -w apps/web
       - run: npx cap add android
