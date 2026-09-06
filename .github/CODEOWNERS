@@ -1,0 +1,11 @@
+# Default ownership for the Pro Chat repository.
+# Replace @Narsing-s with a team when the project grows.
+* @Narsing-s
+
+# Security-sensitive areas require explicit maintainer review.
+/apps/server/ @Narsing-s
+/apps/web/public/auth.js @Narsing-s
+/apps/web/src/ @Narsing-s
+/.github/ @Narsing-s
+/docs/SECURITY.md @Narsing-s
+/SECURITY.md @Narsing-s
