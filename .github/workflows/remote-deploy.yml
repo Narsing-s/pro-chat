@@ -1,0 +1,100 @@
+name: Pro Chat Remote Deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: ${{ vars.PRO_CHAT_REMOTE_DEPLOY == 'true' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    env:
+      REMOTE_HOST: ${{ secrets.PRO_CHAT_REMOTE_HOST }}
+      REMOTE_USER: ${{ secrets.PRO_CHAT_REMOTE_USER }}
+      REMOTE_PATH: ${{ secrets.PRO_CHAT_REMOTE_PATH }}
+      DOMAIN: ${{ secrets.PRO_CHAT_DOMAIN }}
+      DATABASE_URL: ${{ secrets.PRO_CHAT_DATABASE_URL }}
+      SESSION_SECRET: ${{ secrets.PRO_CHAT_SESSION_SECRET }}
+      REQUIRE_EMAIL_VERIFICATION: ${{ vars.PRO_CHAT_REQUIRE_EMAIL_VERIFICATION || 'false' }}
+      REQUIRE_PHONE_VERIFICATION: ${{ vars.PRO_CHAT_REQUIRE_PHONE_VERIFICATION || 'false' }}
+      REQUIRE_DEVICE_APPROVAL: ${{ vars.PRO_CHAT_REQUIRE_DEVICE_APPROVAL || 'false' }}
+    steps:
+      - name: Validate deployment configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in REMOTE_HOST REMOTE_USER REMOTE_PATH DOMAIN DATABASE_URL SESSION_SECRET; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required production setting: $name"
+              exit 1
+            fi
+          done
+          if [ "${#SESSION_SECRET}" -lt 32 ]; then
+            echo "PRO_CHAT_SESSION_SECRET must contain at least 32 characters"
+            exit 1
+          fi
+
+      - name: Configure SSH
+        shell: bash
+        env:
+          SSH_KEY: ${{ secrets.PRO_CHAT_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$SSH_KEY"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/prochat_deploy
+          chmod 600 ~/.ssh/prochat_deploy
+          ssh-keyscan -H "$REMOTE_HOST" >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy application
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/prochat_deploy "$REMOTE_USER@$REMOTE_HOST" \
+            "REMOTE_PATH='$REMOTE_PATH' DOMAIN='$DOMAIN' DATABASE_URL='$DATABASE_URL' SESSION_SECRET='$SESSION_SECRET' REQUIRE_EMAIL_VERIFICATION='$REQUIRE_EMAIL_VERIFICATION' REQUIRE_PHONE_VERIFICATION='$REQUIRE_PHONE_VERIFICATION' REQUIRE_DEVICE_APPROVAL='$REQUIRE_DEVICE_APPROVAL' bash -s" <<'REMOTE_SCRIPT'
+          set -euo pipefail
+          mkdir -p "$REMOTE_PATH"
+          if [ ! -d "$REMOTE_PATH/.git" ]; then
+            git clone --depth 1 https://github.com/Narsing-s/pro-chat.git "$REMOTE_PATH"
+          else
+            git -C "$REMOTE_PATH" fetch --depth 1 origin main
+            git -C "$REMOTE_PATH" reset --hard origin/main
+          fi
+
+          umask 077
+          cat > "$REMOTE_PATH/.env" <<EOF
+DOMAIN=$DOMAIN
+WEB_ORIGIN=https://$DOMAIN
+WEBAUTHN_RP_ID=$DOMAIN
+WEBAUTHN_RP_NAME=Pro Chat
+WEBAUTHN_ORIGIN=https://$DOMAIN
+DATABASE_URL=$DATABASE_URL
+SESSION_SECRET=$SESSION_SECRET
+REQUIRE_EMAIL_VERIFICATION=$REQUIRE_EMAIL_VERIFICATION
+REQUIRE_PHONE_VERIFICATION=$REQUIRE_PHONE_VERIFICATION
+REQUIRE_DEVICE_APPROVAL=$REQUIRE_DEVICE_APPROVAL
+EOF
+
+          cd "$REMOTE_PATH"
+          docker compose -f deploy/docker-compose.yml up -d --build --remove-orphans
+          docker compose -f deploy/docker-compose.yml ps
+          curl --fail --silent --show-error --retry 10 --retry-delay 3 "https://$DOMAIN/health" >/dev/null
+          echo "Pro Chat production deployment is healthy: https://$DOMAIN"
+          REMOTE_SCRIPT
+
+      - name: Cleanup SSH key
+        if: ${{ always() }}
+        shell: bash
+        run: rm -f ~/.ssh/prochat_deploy
