@@ -1,0 +1,44 @@
+name: Pro Chat Build
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install
+      - run: npm run build -w apps/web
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pro-chat-web
+          path: apps/web/dist
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm install
+      - run: npm run build -w apps/web
+      - run: npx cap add android
+        working-directory: apps/web
+      - run: npx cap sync android
+        working-directory: apps/web
+      - run: chmod +x android/gradlew && android/gradlew assembleDebug
+        working-directory: apps/web
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pro-chat-android-debug
+          path: apps/web/android/app/build/outputs/apk/debug/app-debug.apk
