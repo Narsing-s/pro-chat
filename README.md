@@ -1,76 +1,151 @@
 # Pro Chat
 
-A clean, offline-first messaging foundation for web and Android.
+A global-first, privacy-focused messaging platform for web and Android, built around reliable authentication, realtime messaging and a progressively expanding communication stack.
 
-## What is included
+> **Current status:** active development. The repository is not yet a finished WhatsApp replacement or a production E2EE messenger.
 
-- Responsive messenger UI
-- Local-first message storage using browser storage
-- Automatic realtime reconnect with Socket.IO
-- Authenticated HTTP and realtime sessions
-- Single-tick / double-tick delivery and read indicators
-- Voice and video calling with WebRTC signaling
-- Optional STUN/TURN configuration for difficult networks
-- Web/PWA install support
-- Capacitor Android build in CI
-- Lightweight Fastify + Socket.IO server
-- Persistent self-hosted JSON data volume for the current foundation
-- Docker deployment option
-- No dependency on Render for the application architecture
+## What Pro Chat includes today
 
-## Important architecture note
+- Responsive web messenger UI
+- Account registration and login using username, email or phone
+- Password recovery foundations
+- Authenticated HTTP and Socket.IO realtime sessions
+- PostgreSQL/Neon backend support
+- Realtime messaging foundation
+- Delivery/read indicators
+- Voice/video calling foundation with WebRTC signaling
+- Web/PWA installation support
+- Capacitor Android build support
+- Passkey/WebAuthn registration and authentication
+- Docker deployment configuration
+- GitHub Actions build/deployment workflows
+- Northflank-compatible backend deployment
+- GitHub Pages-compatible static web deployment
+- Responsive chat composer fixed to the bottom of conversations
 
-The client can work offline without a server, but internet messaging between different devices still requires a reachable realtime service. Voice/video calls use WebRTC and require browser permission plus a secure context such as HTTPS; a TURN relay may be needed when direct peer connectivity is unavailable.
-
-The current server provides signed, expiring bearer sessions and authenticated Socket.IO connections. For production, set a stable `SESSION_SECRET` so sessions survive server restarts.
-
-## Local development
-
-```bash
-npm install
-npm run dev
-```
-
-Web: `http://localhost:5173`
-API: `http://localhost:3000`
-
-For a separate API, build the web app with `VITE_API_URL=https://your-api.example.com`.
-
-For WebRTC TURN support, provide these web build variables when needed:
+## Architecture
 
 ```text
-VITE_TURN_URL=turn:your-turn-server:3478
-VITE_TURN_USERNAME=your-username
-VITE_TURN_CREDENTIAL=your-credential
+Web / Android
+     |
+ HTTPS / WSS
+     v
+Fastify + Socket.IO
+     |
+ PostgreSQL / Neon
 ```
 
-## Docker
+See [Architecture](docs/ARCHITECTURE.md) for the current design and security boundaries.
 
-Build the web app first, then:
+## Repository structure
+
+```text
+apps/server/              Fastify + Socket.IO backend
+apps/web/                 React/Vite web client + Capacitor integration
+deploy/                   Docker and reverse-proxy configuration
+docs/                     Architecture, development and deployment guides
+.github/workflows/        CI and deployment workflows
+```
+
+## Quick start
+
+Requirements: Node.js 22+ and npm.
 
 ```bash
 npm install
-npm run build -w apps/web
-docker compose -f deploy/docker-compose.yml up -d --build
+npm run dev -w apps/server
+npm run dev -w apps/web
 ```
 
-Set `WEB_ORIGIN` and `SESSION_SECRET` in the deployment environment rather than relying on development defaults.
+Development URLs:
 
-## Android
+```text
+Web:    http://localhost:5173
+API:    http://localhost:3000
+Health: http://localhost:3000/health
+```
 
-The GitHub Actions workflow builds a debug APK automatically. The Android job first generates/synchronizes the Capacitor Android project and only then enables Gradle dependency caching. This avoids cache initialization failures before the generated Gradle files exist.
+For a separate API origin, configure the web build with `VITE_API_URL`.
 
-Download the `pro-chat-android-debug` artifact from a successful workflow run and install it on Android.
+## Production configuration
+
+The backend expects deployment environment variables similar to:
+
+```text
+NODE_ENV=production
+HOST=0.0.0.0
+PORT=3000
+DATABASE_URL=<PostgreSQL connection string>
+SESSION_SECRET=<random production secret>
+WEB_ORIGIN=<HTTPS frontend origin>
+```
+
+**Never commit real values.** Store credentials and secrets in the hosting provider's secret/environment-variable system.
+
+## Passkeys
+
+Passkeys use WebAuthn. The browser side uses the platform Web Authentication API instead of loading an npm package from `/node_modules` on GitHub Pages.
+
+The server must validate the WebAuthn challenge, relying-party configuration, origin and credential response. Do not bypass verification to work around browser or deployment errors.
+
+Passkeys require a secure browser context such as HTTPS in production.
+
+## Deployment
+
+The current documented setup separates the static web client from the backend:
+
+- **Web:** GitHub Pages or another HTTPS static host.
+- **Backend:** Northflank or another service that supports long-running HTTP and WebSocket workloads.
+- **Database:** PostgreSQL/Neon.
+
+Read [Northflank Deployment](docs/NORTHFLANK-DEPLOYMENT.md) and [Remote Deployment](docs/REMOTE-DEPLOYMENT.md) for deployment-specific configuration.
+
+GitHub Pages cannot run the Fastify API or Socket.IO backend; it only serves the frontend assets.
+
+## Security
+
+Security-sensitive behavior is documented in [SECURITY.md](SECURITY.md) and [docs/SECURITY.md](docs/SECURITY.md).
+
+Do not put database URLs, session secrets, provider credentials or private keys into frontend code, README files or Git history. If a production secret is exposed, rotate it.
+
+Pro Chat should not be advertised as end-to-end encrypted until a complete, vetted E2EE protocol has been implemented and reviewed.
+
+## Development and testing
+
+See [Development Guide](docs/DEVELOPMENT.md) for local setup, authentication testing, realtime debugging and Android development.
+
+For every authentication or messaging change, verify the core journey:
+
+```text
+Create account
+    -> Login
+    -> Home
+    -> New chat
+    -> Send message
+    -> Receive message
+```
 
 ## Roadmap
 
-Next production layers:
+1. Strong account/device/session management
+2. Reliable multi-device synchronization
+3. Groups and communities
+4. Media and file sharing
+5. Push notifications
+6. Voice/video calling hardening
+7. Privacy controls, chat lock and abuse prevention
+8. Translation and accessibility
+9. Events, polls, channels and creator/business features
+10. Vetted end-to-end encryption
+11. AI-assisted messaging and other differentiating features
 
-1. Full account/recovery authentication and device/session management
-2. PostgreSQL or another transactional database for multi-instance deployments
-3. True end-to-end encryption using a vetted protocol/library
-4. Push notification delivery through FCM/APNs
-5. Media/file uploads with access controls
-6. Group chats and stronger message synchronization
-7. Production HTTPS and a self-hosted TURN service
-8. Rate limiting, abuse protection, observability, backups, and migrations
+## Documentation
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Development Guide](docs/DEVELOPMENT.md)
+- [Security Guide](docs/SECURITY.md)
+- [Northflank Deployment](docs/NORTHFLANK-DEPLOYMENT.md)
+- [Remote Deployment](docs/REMOTE-DEPLOYMENT.md)
+- [Project Documentation](docs/README.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security Policy](SECURITY.md)
