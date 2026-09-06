@@ -1,6 +1,6 @@
 import React,{useEffect,useRef,useState} from 'react';
 import {createRoot} from 'react-dom/client';
-import {MessageCircle,Search,Send,Phone,Video,MoreVertical,Check,CheckCheck,LogOut,Star,Archive,Settings,Shield,User,ChevronDown,ChevronLeft,X} from 'lucide-react';
+import {MessageCircle,Search,Send,Phone,Video,MoreVertical,Check,CheckCheck,LogOut,Star,Archive,Settings,Shield,User,ChevronDown,ChevronLeft,X,Smile,Paperclip,PhoneCall,VideoIcon} from 'lucide-react';
 import './styles.css';
 
 const isLocalHost=['localhost','127.0.0.1','0.0.0.0'].includes(location.hostname);
@@ -13,15 +13,18 @@ const API=CONFIG_API||(isLocalHost||isViteDev?`http://${localApiHost}:3000`:loca
 const USER_KEY='pro-chat-user-v3',CHATS_KEY='pro-chat-chats-v3',MSG_KEY='pro-chat-messages-v3',OUTBOX_KEY='pro-chat-outbox-v1';
 const cid=(a,b)=>[a,b].sort().join(':');
 const read=(k,f)=>{try{return JSON.parse(localStorage.getItem(k))??f}catch{return f}};
-if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
+if('serviceWorker' in navigator && !import.meta.env.DEV)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
+
+const EMOJIS=['😀','😂','🤣','😊','😍','🥰','😘','😎','🤔','😭','😡','👍','👎','👏','🙏','❤️','🔥','🎉','💯','✨','😂','😄','😉','🤗','😇','🤩','😢','😮','🥳','❤️‍🔥','💙','💚','💛','🧡','💜','🤝','🙌','💪','👀','🎂','🎁','🚀','🌍','☀️','🌙'];
+function playTypingSound(){try{const C=window.AudioContext||window.webkitAudioContext;if(!C)return;const c=new C(),o=c.createOscillator(),g=c.createGain();o.frequency.value=520;o.type='sine';g.gain.setValueAtTime(.018,c.currentTime);g.gain.exponentialRampToValueAtTime(.001,c.currentTime+.055);o.connect(g).connect(c.destination);o.start();o.stop(c.currentTime+.06)}catch{}}
 
 function App(){
  const me=read(USER_KEY,null);
  const[chats,setChats]=useState(()=>read(CHATS_KEY,[]).map(c=>({...c,favorite:!!c.favorite,archived:!!c.archived})));
  const[messages,setMessages]=useState(()=>read(MSG_KEY,{}));
  const[search,setSearch]=useState('');const[results,setResults]=useState([]);const[searching,setSearching]=useState(false);const[searchError,setSearchError]=useState('');
- const[active,setActive]=useState(null);const[text,setText]=useState('');const[folder,setFolder]=useState('all');const[profileOpen,setProfileOpen]=useState(false);const[chatMenu,setChatMenu]=useState(false);const[profileView,setProfileView]=useState(null);
- const socketRef=useRef(null);
+ const[active,setActive]=useState(null);const[text,setText]=useState('');const[folder,setFolder]=useState('all');const[profileOpen,setProfileOpen]=useState(false);const[chatMenu,setChatMenu]=useState(false);const[profileView,setProfileView]=useState(null);const[emojiOpen,setEmojiOpen]=useState(false);const[typing,setTyping]=useState(false);const[attachment,setAttachment]=useState(null);const[callNotice,setCallNotice]=useState('');
+ const socketRef=useRef(null);const typingTimer=useRef(null);const typingSoundTimer=useRef(null);const fileRef=useRef(null);
  useEffect(()=>localStorage.setItem(CHATS_KEY,JSON.stringify(chats)),[chats]);
  useEffect(()=>localStorage.setItem(MSG_KEY,JSON.stringify(messages)),[messages]);
  useEffect(()=>{
@@ -31,40 +34,31 @@ function App(){
      if(disposed)return;
      const s=io(API,{auth:{token:me.token},transports:['websocket','polling'],reconnection:true});
      socketRef.current=s;
+     window.__PRO_CHAT_SOCKET__=s;
      s.on('connect',()=>{read(OUTBOX_KEY,[]).forEach(m=>s.emit('message:send',m));localStorage.setItem(OUTBOX_KEY,'[]')});
      s.on('message:new',receive);s.on('message:ack',receive);
+     s.on('typing:update',p=>{if(p?.chatId===active&&p.userId!==me.id){setTyping(Boolean(p.typing));if(p.typing&&!typingSoundTimer.current){playTypingSound();typingSoundTimer.current=setTimeout(()=>{typingSoundTimer.current=null},1200)}}});
+     s.on('call:incoming',p=>{if(p?.chatId===active)setCallNotice(`${p.video?'Video':'Voice'} call incoming from @${p.username||'contact'}`)});
+     s.on('call:ended',()=>setCallNotice('Call ended'));
    }).catch(()=>{});
-   return()=>{disposed=true;socketRef.current?.disconnect();socketRef.current=null}
- },[me?.token]);
- function receive(m){if(!m?.chatId||!m?.id)return;setMessages(p=>({...p,[m.chatId]:[...(p[m.chatId]||[]).filter(x=>x.id!==m.id),m].sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt))}));setChats(p=>p.map(c=>c.id===m.chatId?{...c,lastMessage:m.text,lastAt:m.createdAt}:c))}
- async function find(q=search){
-   const v=q.trim();setSearchError('');if(!v){setResults([]);return}setSearching(true);
-   try{
-     if(LOCAL_MODE){setResults([]);setSearchError('Configure the Pro Chat API URL for account search and messaging.');return}
-     const r=await fetch(`${API}/api/users?q=${encodeURIComponent(v)}`,{headers:{Authorization:`Bearer ${me.token}`},cache:'no-store'});const d=await r.json().catch(()=>[]);if(!r.ok)throw Error(d.error||`Search failed (${r.status})`);const users=Array.isArray(d)?d.filter(u=>u.id!==me.id):[];setResults(users);if(!users.length)setSearchError('No user found. Try the exact username, email or phone number.')
-   }catch(e){setResults([]);setSearchError(e.message==='Failed to fetch'||e.name==='TypeError'?'Cannot reach the Pro Chat server.':e.message||'Unable to search users.')}finally{setSearching(false)}
- }
- function activateChat(id){setActive(id);setSearch('');setResults([]);setSearchError('');setChatMenu(false)}
- async function openUser(u){
-   if(!u?.id||u.id===me.id)return;const id=cid(me.id,u.id);activateChat(id);
-   setChats(p=>p.some(c=>c.id===id)?p:p.concat([{id,userId:u.id,name:u.name||u.username||'Contact',username:u.username||'',email:u.email||'',phoneNumber:u.phoneNumber||'',lastMessage:'',lastAt:u.createdAt||new Date().toISOString(),favorite:false,archived:false}]));
-   if(LOCAL_MODE)return;
-   socketRef.current?.emit('chat:join',id);
-   try{const r=await fetch(`${API}/api/messages/${encodeURIComponent(id)}`,{headers:{Authorization:`Bearer ${me.token}`},cache:'no-store'});if(r.ok){const d=await r.json();setMessages(p=>({...p,[id]:Array.isArray(d)?d:[]}))}}catch{}
- }
+   return()=>{disposed=true;clearTimeout(typingTimer.current);socketRef.current?.disconnect();socketRef.current=null;window.__PRO_CHAT_SOCKET__=null}
+ },[me?.token,active]);
+ function receive(m){if(!m?.chatId||!m?.id)return;setMessages(p=>({...p,[m.chatId]:[...(p[m.chatId]||[]).filter(x=>x.id!==m.id),m].sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt))}));setChats(p=>p.map(c=>c.id===m.chatId?{...c,lastMessage:m.text||'Attachment',lastAt:m.createdAt}:c))}
+ async function find(q=search){const v=q.trim();setSearchError('');if(!v){setResults([]);return}setSearching(true);try{if(LOCAL_MODE){setResults([]);setSearchError('Configure the Pro Chat API URL for account search and messaging.');return}const r=await fetch(`${API}/api/users?q=${encodeURIComponent(v)}`,{headers:{Authorization:`Bearer ${me.token}`},cache:'no-store'});const d=await r.json().catch(()=>[]);if(!r.ok)throw Error(d.error||`Search failed (${r.status})`);const users=Array.isArray(d)?d.filter(u=>u.id!==me.id):[];setResults(users);if(!users.length)setSearchError('No user found. Try the exact username, email or phone number.')}catch(e){setResults([]);setSearchError(e.message==='Failed to fetch'||e.name==='TypeError'?'Cannot reach the Pro Chat server.':e.message||'Unable to search users.')}finally{setSearching(false)}}
+ function activateChat(id){setActive(id);setSearch('');setResults([]);setSearchError('');setChatMenu(false);setEmojiOpen(false);setAttachment(null);setCallNotice('')}
+ async function openUser(u){if(!u?.id||u.id===me.id)return;const id=cid(me.id,u.id);activateChat(id);setChats(p=>p.some(c=>c.id===id)?p:p.concat([{id,userId:u.id,name:u.name||u.username||'Contact',username:u.username||'',email:u.email||'',phoneNumber:u.phoneNumber||'',lastMessage:'',lastAt:u.createdAt||new Date().toISOString(),favorite:false,archived:false}]));if(LOCAL_MODE)return;socketRef.current?.emit('chat:join',id);try{const r=await fetch(`${API}/api/messages/${encodeURIComponent(id)}`,{headers:{Authorization:`Bearer ${me.token}`},cache:'no-store'});if(r.ok){const d=await r.json();setMessages(p=>({...p,[id]:Array.isArray(d)?d:[]}))}}catch{}}
  function openChat(c){if(!c?.id)return;activateChat(c.id);if(!LOCAL_MODE)socketRef.current?.emit('chat:join',c.id)}
  function toggleFavorite(id){setChats(p=>p.map(c=>c.id===id?{...c,favorite:!c.favorite}:c))}
  function toggleArchive(id){setChats(p=>p.map(c=>c.id===id?{...c,archived:!c.archived}:c));setChatMenu(false);if(folder==='archived'&&active===id)setActive(null)}
- function send(){
-   const v=text.trim(),c=chats.find(x=>x.id===active);if(!v||!c)return;
-   const m={id:crypto.randomUUID(),chatId:active,senderId:me.id,senderName:me.name,senderUsername:me.username,receiverId:c.userId,text:v,createdAt:new Date().toISOString(),status:'sent'};
-   receive(m);setText('');if(LOCAL_MODE)return;if(socketRef.current?.connected)socketRef.current.emit('message:send',m);else{const q=read(OUTBOX_KEY,[]);q.push(m);localStorage.setItem(OUTBOX_KEY,JSON.stringify(q))}
- }
+ function emitTyping(value){if(LOCAL_MODE||!socketRef.current?.connected||!active)return;socketRef.current.emit(value?'typing:start':'typing:stop',{chatId:active});clearTimeout(typingTimer.current);if(value)typingTimer.current=setTimeout(()=>socketRef.current?.emit('typing:stop',{chatId:active}),1500)}
+ function send(){const v=text.trim();const c=chats.find(x=>x.id===active);if(!c)return;if(!v&&!attachment)return;const m={id:crypto.randomUUID(),chatId:active,senderId:me.id,senderName:me.name,senderUsername:me.username,receiverId:c.userId,text:v||`📎 ${attachment?.name||'Attachment'}`,createdAt:new Date().toISOString(),status:'sent',attachment:attachment?{name:attachment.name,type:attachment.type,size:attachment.size,url:attachment.url}:undefined};receive(m);setText('');setAttachment(null);setEmojiOpen(false);emitTyping(false);if(LOCAL_MODE)return;if(socketRef.current?.connected)socketRef.current.emit('message:send',m);else{const q=read(OUTBOX_KEY,[]);q.push(m);localStorage.setItem(OUTBOX_KEY,JSON.stringify(q))}}
+ function chooseFile(e){const f=e.target.files?.[0];e.target.value='';if(!f)return;if(f.size>25*1024*1024){setCallNotice('Attachment is too large. Maximum 25 MB.');return}const url=URL.createObjectURL(f);setAttachment({name:f.name,type:f.type||'application/octet-stream',size:f.size,url})}
+ function insertEmoji(e){setText(v=>v+e);setEmojiOpen(false)}
+ function startCall(video){if(!activeChat)return;setCallNotice(`${video?'Video':'Voice'} calling…`);if(socketRef.current?.connected)socketRef.current.emit('call:start',{chatId:activeChat.id,video});else setCallNotice('Call server is not connected.');}
+ function endCall(){socketRef.current?.emit('call:end',{chatId:activeChat?.id});setCallNotice('Call ended')}
  function logout(){localStorage.removeItem(USER_KEY);location.replace(location.pathname)}
  if(!me)return null;
- const activeChat=chats.find(c=>c.id===active);const list=active?(messages[active]||[]):[];
- const visibleChats=chats.filter(c=>folder==='favorites'?c.favorite:folder==='archived'?c.archived:!c.archived);
- const counts={all:chats.filter(c=>!c.archived).length,favorites:chats.filter(c=>c.favorite&&!c.archived).length,archived:chats.filter(c=>c.archived).length};
+ const activeChat=chats.find(c=>c.id===active);const list=active?(messages[active]||[]):[];const visibleChats=chats.filter(c=>folder==='favorites'?c.favorite:folder==='archived'?c.archived:!c.archived);const counts={all:chats.filter(c=>!c.archived).length,favorites:chats.filter(c=>c.favorite&&!c.archived).length,archived:chats.filter(c=>c.archived).length};
  return <div className="app-shell">
   <aside className={'sidebar '+(active?'has-active':'')}>
    <div className="brand"><MessageCircle size={25}/><strong>Pro Chat</strong><div className="brand-actions"><button title="Settings" onClick={()=>setProfileView('settings')}><Settings size={19}/></button></div></div>
@@ -75,7 +69,10 @@ function App(){
    <div className="chat-list">{visibleChats.length?visibleChats.map(c=><div key={c.id} className={'chat-row '+(active===c.id?'active':'')} onClick={()=>openChat(c)}><div className="avatar">{(c.username||c.name||'P')[0].toUpperCase()}</div><div className="chat-meta"><b>@{c.username||c.name}</b><span>{c.lastMessage||'Start a conversation'}</span></div><div className="chat-row-actions"><button title={c.favorite?'Remove favorite':'Add to favorites'} onClick={e=>{e.stopPropagation();toggleFavorite(c.id)}}><Star size={17} fill={c.favorite?'currentColor':'none'}/></button><button title={c.archived?'Unarchive':'Archive'} onClick={e=>{e.stopPropagation();toggleArchive(c.id)}}><Archive size={17}/></button></div></div>):<div className="folder-empty"><Archive size={26}/><span>{folder==='favorites'?'No favorite chats yet':folder==='archived'?'No archived chats':'No chats yet'}</span></div>}</div>
   </aside>
   <main className="chat-panel">
-   {activeChat?<><header className="chat-header"><button className="mobile-back" onClick={()=>setActive(null)}><ChevronLeft size={22}/></button><div className="avatar">{(activeChat.username||activeChat.name||'P')[0].toUpperCase()}</div><div className="chat-title"><b>@{activeChat.username||activeChat.name}</b><small>{activeChat.name}{activeChat.email?' • '+activeChat.email:''}</small></div><div className="chat-actions"><button title="Favorite" onClick={()=>toggleFavorite(activeChat.id)}><Star size={19} fill={activeChat.favorite?'currentColor':'none'}/></button><button title="Voice call"><Phone size={19}/></button><button title="Video call"><Video size={20}/></button><button title="More" onClick={()=>setChatMenu(v=>!v)}><MoreVertical size={20}/></button></div>{chatMenu&&<div className="chat-menu"><button onClick={()=>toggleFavorite(activeChat.id)}><Star size={17}/>{activeChat.favorite?'Remove from favorites':'Add to favorites'}</button><button onClick={()=>toggleArchive(activeChat.id)}><Archive size={17}/>{activeChat.archived?'Unarchive chat':'Archive chat'}</button></div>}</header><section className="messages">{list.length?list.map(m=><div key={m.id} className={'bubble-row '+(m.senderId===me.id?'mine':'theirs')}><div className={'bubble '+(m.senderId===me.id?'mine':'theirs')}><span>{m.text}</span><small>{new Date(m.createdAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})} {m.senderId===me.id&&(m.status==='sent'?<Check size={13}/>:<CheckCheck size={13}/>)}</small></div></div>):<div className="conversation-empty"><MessageCircle size={34}/><span>No messages yet</span><small>Send a message to start the conversation.</small></div>}</section><footer className="composer"><input value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>e.key==='Enter'&&!e.shiftKey&&(e.preventDefault(),send())} placeholder="Type a message"/><button onClick={send} disabled={!text.trim()}><Send size={20}/></button></footer></>:<div className="empty-state"><MessageCircle size={56}/><h2>Pro Chat</h2><p>Select a chat or search a username, email or phone number to start a private conversation.</p></div>}
+   {activeChat?<><header className="chat-header"><button className="mobile-back" onClick={()=>setActive(null)}><ChevronLeft size={22}/></button><div className="avatar">{(activeChat.username||activeChat.name||'P')[0].toUpperCase()}</div><div className="chat-title"><b>@{activeChat.username||activeChat.name}</b><small>{typing?'typing…':activeChat.name+(activeChat.email?' • '+activeChat.email:'')}</small></div><div className="chat-actions"><button title="Favorite" onClick={()=>toggleFavorite(activeChat.id)}><Star size={19} fill={activeChat.favorite?'currentColor':'none'}/></button><button title="Voice call" onClick={()=>startCall(false)}><Phone size={19}/></button><button title="Video call" onClick={()=>startCall(true)}><Video size={20}/></button><button title="More" onClick={()=>setChatMenu(v=>!v)}><MoreVertical size={20}/></button></div>{chatMenu&&<div className="chat-menu"><button onClick={()=>toggleFavorite(activeChat.id)}><Star size={17}/>{activeChat.favorite?'Remove from favorites':'Add to favorites'}</button><button onClick={()=>toggleArchive(activeChat.id)}><Archive size={17}/>{activeChat.archived?'Unarchive chat':'Archive chat'}</button></div>}</header>
+   {callNotice&&<div className="call-banner"><span>{callNotice}</span><button onClick={endCall}>End</button><button onClick={()=>setCallNotice('')}>×</button></div>}
+   <section className="messages">{list.length?list.map(m=><div key={m.id} className={'bubble-row '+(m.senderId===me.id?'mine':'theirs')}><div className={'bubble '+(m.senderId===me.id?'mine':'theirs')}>{m.attachment?.url&&<a href={m.attachment.url} target="_blank" rel="noreferrer">📎 {m.attachment.name}</a>}<span>{m.text}</span><small>{new Date(m.createdAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})} {m.senderId===me.id&&(m.status==='sent'?<Check size={13}/>:<CheckCheck size={13}/>)}</small></div></div>):<div className="conversation-empty"><MessageCircle size={34}/><span>No messages yet</span><small>Send a message to start the conversation.</small></div>}</section>
+   <footer className="composer"><input ref={fileRef} type="file" hidden onChange={chooseFile}/><div className="composer-tools"><button title="Attach file" onClick={()=>fileRef.current?.click()}><Paperclip size={19}/></button><button title="Emoji" onClick={()=>setEmojiOpen(v=>!v)}><Smile size={20}/></button></div><input value={text} onChange={e=>{setText(e.target.value);emitTyping(Boolean(e.target.value.trim()))}} onKeyDown={e=>e.key==='Enter'&&!e.shiftKey&&(e.preventDefault(),send())} placeholder="Type a message"/><button onClick={send} disabled={!text.trim()&&!attachment}><Send size={20}/></button>{emojiOpen&&<div className="emoji-picker">{EMOJIS.map((e,i)=><button key={i} onClick={()=>insertEmoji(e)}>{e}</button>)}</div>}{attachment&&<div className="attachment-preview">📎 {attachment.name} <button onClick={()=>setAttachment(null)}><X size={14}/></button></div>}</footer></>:<div className="empty-state"><MessageCircle size={56}/><h2>Pro Chat</h2><p>Select a chat or search a username, email or phone number to start a private conversation.</p></div>}
   </main>
   {profileView&&<div className="modal-backdrop" onClick={()=>setProfileView(null)}><section className="profile-modal" onClick={e=>e.stopPropagation()}><button className="modal-close" onClick={()=>setProfileView(null)}><X size={19}/></button>{profileView==='profile'&&<><div className="modal-avatar avatar">{(me.username||me.name||'P')[0].toUpperCase()}</div><h2>My profile</h2><div className="profile-details"><div><span>Name</span><b>{me.name||'—'}</b></div><div><span>Username</span><b>@{me.username||'—'}</b></div><div><span>Email</span><b>{me.email||'—'}</b></div><div><span>Phone</span><b>{me.phoneNumber||'—'}</b></div></div></>}{profileView==='settings'&&<><h2>Settings</h2><p className="modal-note">Manage your Pro Chat experience. Your chat preferences are stored on this device.</p><div className="settings-item"><Settings size={19}/><span>Chat settings</span></div><div className="settings-item"><Shield size={19}/><span>Security & privacy</span></div></>}{profileView==='privacy'&&<><h2>Privacy</h2><p className="modal-note">Your profile details are shown only where required for account discovery and messaging.</p><div className="settings-item"><Shield size={19}/><span>Private conversations</span></div><div className="settings-item"><User size={19}/><span>Profile visibility</span></div></>}</section></div>}
  </div>
