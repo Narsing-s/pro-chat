@@ -10,16 +10,41 @@ services:
       PORT: 3000
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL before starting Pro Chat}
       SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET before starting Pro Chat}
-      WEB_ORIGIN: ${WEB_ORIGIN:-*}
+      WEB_ORIGIN: ${WEB_ORIGIN:?Set WEB_ORIGIN to the public Pro Chat URL}
+      WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:-}
+      WEBAUTHN_RP_NAME: ${WEBAUTHN_RP_NAME:-Pro Chat}
+      WEBAUTHN_ORIGIN: ${WEBAUTHN_ORIGIN:-}
+      REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-false}
+      REQUIRE_PHONE_VERIFICATION: ${REQUIRE_PHONE_VERIFICATION:-false}
+      REQUIRE_DEVICE_APPROVAL: ${REQUIRE_DEVICE_APPROVAL:-false}
     expose:
       - "3000"
+
   web:
-    image: nginx:alpine
+    build:
+      context: ..
+      dockerfile: deploy/web.Dockerfile
     restart: unless-stopped
-    volumes:
-      - ../apps/web/dist:/usr/share/nginx/html:ro
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
-    ports:
-      - "8080:80"
     depends_on:
       - api
+    expose:
+      - "80"
+
+  gateway:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN, for example chat.example.com}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - web
+
+volumes:
+  caddy_data:
+  caddy_config:
