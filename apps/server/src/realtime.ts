@@ -11,9 +11,10 @@ await app.register(cors, { origin: corsOrigin });
 
 const secret = process.env.SESSION_SECRET?.trim();
 if (!secret) throw new Error('SESSION_SECRET is required');
+const SESSION_SECRET = secret;
 
 function sign(payload: string) {
-  return createHmac('sha256', secret).update(payload).digest('hex');
+  return createHmac('sha256', SESSION_SECRET).update(payload).digest('hex');
 }
 
 function verifyToken(token: string) {
