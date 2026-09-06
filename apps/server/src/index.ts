@@ -30,11 +30,13 @@ const optionalAuth=(req:any)=>verifyToken(bearer(req));
 const chatUsers=(chatId:string)=>chatId.split(':');
 const userSockets=(userId:string)=>Array.from(sockets.entries()).filter(([,uid])=>uid===userId).map(([sid])=>sid);
 const normalizeEmail=(v:any)=>String(v||'').trim().toLowerCase();
-const normalizePhone=(v:any)=>String(v||'').replace(/[\s().-]/g,'').trim();
+const normalizePhone=(v:any)=>String(v||'').replace(/\s/g,'').replace(/[().-]/g,'').trim();
 const normalizeUsername=(v:any)=>String(v||'').trim().toLowerCase();
+const normalizeSearch=(v:any)=>String(v||'').trim().toLowerCase();
 const hashPassword=(password:string)=>{const salt=randomBytes(16).toString('hex');return `${salt}:${scryptSync(password,salt,64).toString('hex')}`};
 const checkPassword=(password:string,stored?:string)=>{try{if(!stored)return false;const [salt,hash]=stored.split(':');const actual=scryptSync(password,salt,64);const expected=Buffer.from(hash,'hex');return expected.length===actual.length&&timingSafeEqual(actual,expected)}catch{return false}};
 const publicUser=(u:User,token:string)=>({id:u.id,name:u.name,email:u.email,phoneNumber:u.phoneNumber,username:u.username,createdAt:u.createdAt,online:!!u.online,token});
+const searchUser=(u:User,q:string)=>{const x=normalizeSearch(q);if(!x)return true;const phone=normalizePhone(q);return normalizeUsername(u.username).includes(x)||normalizeSearch(u.name).includes(x)||normalizeEmail(u.email).includes(x)||normalizePhone(u.phoneNumber).includes(phone)};
 
 app.get('/health',async()=>({ok:true,service:'pro-chat',time:new Date().toISOString(),users:store.users.length}));
 
@@ -84,7 +86,25 @@ app.post<{Body:{id?:string;name?:string}}>('/api/users',async(req,reply)=>{
   return {...user,token};
 });
 app.post('/api/session',async(req:any,reply)=>{const userId=optionalAuth(req);if(!userId)return reply.code(401).send({error:'Authentication required'});const u=store.users.find(x=>x.id===userId);if(!u)return reply.code(401).send({error:'User not found'});const token=makeToken(userId);store.sessions.push({token,userId,createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+30*86400000).toISOString()});await persist();return {...u,token}});
-app.get('/api/users',async(req:any)=>{const userId=optionalAuth(req);const q=String(req.query?.q||'').toLowerCase().trim();return store.users.filter(u=>u.id!==userId&&(!q||u.name.toLowerCase().includes(q)||String(u.username||'').toLowerCase().includes(q))).map(u=>({...u,online:!!u.online,passwordHash:undefined}))});
+
+// Global user directory: search by username, display name, email, or phone.
+// Exact username/email/phone matches are included, and partial matches are supported for discovery.
+app.get('/api/users',async(req:any,reply)=>{
+  const userId=optionalAuth(req);
+  const q=String(req.query?.q||'').trim();
+  if(q.length>100)return reply.code(400).send({error:'Search text is too long'});
+  const users=store.users
+    .filter(u=>u.id!==userId)
+    .filter(u=>searchUser(u,q))
+    .sort((a,b)=>{
+      const x=normalizeSearch(q),au=normalizeUsername(a.username),bu=normalizeUsername(b.username);
+      const ar=au===x?0:au.startsWith(x)?1:2,br=bu===x?0:bu.startsWith(x)?1:2;
+      return ar-br||a.name.localeCompare(b.name);
+    })
+    .slice(0,50)
+    .map(u=>({id:u.id,name:u.name,email:u.email,phoneNumber:u.phoneNumber,username:u.username,createdAt:u.createdAt,online:!!u.online}));
+  return users;
+});
 app.get<{Params:{chatId:string}}>('/api/messages/:chatId',async req=>store.messages.filter(m=>m.chatId===req.params.chatId).slice(-200));
 
 const http=createServer(app.server);const io=new Server(http,{cors:{origin,methods:['GET','POST']},maxHttpBufferSize:256*1024});
