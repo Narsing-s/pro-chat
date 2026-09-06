@@ -7,6 +7,29 @@
 <meta name="description" content="Pro Chat — private messaging"/>
 <link rel="manifest" href="./manifest.webmanifest"/>
 <title>Pro Chat</title>
+<style>
+/* Authentication must always fit the screen on phones and desktops. */
+.pro-auth-overlay{overflow-y:auto!important;align-items:center!important;min-height:100dvh;padding:12px!important}
+.pro-auth-card{width:min(440px,100%)!important;max-height:calc(100dvh - 24px)!important;overflow-y:auto!important;padding:22px!important;margin:auto!important}
+.pro-auth-card h1{font-size:24px!important}
+.pro-auth-card p{margin-bottom:12px!important}
+.pro-auth-card label{margin:8px 0 4px!important}
+.pro-auth-card input{padding:10px 12px!important}
+.pro-auth-primary{margin-top:12px!important}
+.pro-auth-switch,.pro-auth-forgot{display:block!important}
+@media (max-width:600px){
+  .pro-auth-overlay{padding:8px!important;place-items:center!important}
+  .pro-auth-card{max-height:calc(100dvh - 16px)!important;border-radius:18px!important;padding:18px!important}
+  .pro-auth-logo{width:46px!important;height:46px!important;margin-bottom:10px!important}
+  .pro-auth-card h1{font-size:22px!important}
+  .pro-auth-card p{font-size:13px!important;margin-bottom:8px!important}
+  .pro-auth-card label{font-size:12px!important}
+  .pro-auth-card input{height:42px!important;font-size:14px!important}
+  .pro-auth-primary{padding:11px!important;margin-top:10px!important}
+  .pro-auth-switch,.pro-auth-forgot{font-size:13px!important;margin-top:10px!important}
+  .pro-auth-note{font-size:11px!important;margin-top:10px!important}
+}
+</style>
 </head>
 <body>
 <div id="root"></div>
