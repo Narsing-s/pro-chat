@@ -9,6 +9,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
 <link rel="manifest" href="./manifest.webmanifest"/>
+<link rel="stylesheet" href="./src/pro-chat-v2.css?v=20260906-1"/>
 <title>Pro Chat</title>
 <style>
 .pro-auth-overlay{overflow-y:auto!important;align-items:center!important;min-height:100dvh;padding:12px!important}
@@ -19,23 +20,11 @@
 .pro-auth-card input{padding:10px 12px!important}
 .pro-auth-primary{margin-top:12px!important}
 .pro-auth-switch,.pro-auth-forgot{display:block!important}
-.emoji-picker{position:absolute;left:8px;bottom:66px;display:grid;grid-template-columns:repeat(8,1fr);gap:4px;padding:10px;background:var(--panel,#fff);border:1px solid rgba(0,0,0,.12);border-radius:14px;box-shadow:0 12px 35px rgba(0,0,0,.18);z-index:20;max-width:min(360px,90vw)}
-.emoji-picker button{border:0;background:transparent;border-radius:8px;font-size:22px;padding:6px;cursor:pointer}
-.emoji-picker button:hover{background:rgba(0,0,0,.07)}
-.composer{position:relative}
-.composer-tools{display:flex;align-items:center;gap:2px}
-.composer-tools button,.call-banner button{border:0;background:transparent;cursor:pointer}
-.attachment-preview{position:absolute;left:10px;bottom:62px;background:var(--panel,#fff);padding:8px 10px;border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.15);font-size:13px;max-width:80%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.attachment-preview button{border:0;background:transparent;cursor:pointer;margin-left:6px}
-.call-banner{display:flex;align-items:center;gap:10px;padding:9px 12px;background:rgba(7,94,84,.1);border-bottom:1px solid rgba(7,94,84,.2)}
-.call-banner span{flex:1}
-.call-banner button:first-of-type{padding:6px 12px;border-radius:8px;background:#c62828;color:white}
-@media (max-width:600px){.pro-auth-overlay{padding:8px!important;place-items:center!important}.pro-auth-card{max-height:calc(100dvh - 16px)!important;border-radius:18px!important;padding:18px!important}.pro-auth-logo{width:46px!important;height:46px!important;margin-bottom:10px!important}.pro-auth-card h1{font-size:22px!important}.pro-auth-card p{font-size:13px!important;margin-bottom:8px!important}.pro-auth-card label{font-size:12px!important}.pro-auth-card input{height:42px!important;font-size:14px!important}.pro-auth-primary{padding:11px!important;margin-top:10px!important}.pro-auth-switch,.pro-auth-forgot{font-size:13px!important;margin-top:10px!important}.pro-auth-note{font-size:11px!important;margin-top:10px!important}.emoji-picker{grid-template-columns:repeat(7,1fr);bottom:58px}.composer-tools button{padding:8px}.call-banner{font-size:13px}}
 </style>
 </head>
 <body>
 <div id="root"></div>
-<script src="./auth.js?v=20260906-4"></script>
-<script type="module" src="./src/main.jsx?v=20260906-4"></script>
+<script src="./auth.js?v=20260906-5"></script>
+<script type="module" src="./src/main.jsx?v=20260906-5"></script>
 </body>
 </html>
