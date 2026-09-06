@@ -5,12 +5,12 @@ services:
       dockerfile: apps/server/Dockerfile
     restart: unless-stopped
     environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
       PORT: 3000
-      DATA_FILE: /app/data/pro-chat.json
-      WEB_ORIGIN: ${WEB_ORIGIN:-*}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL before starting Pro Chat}
       SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET before starting Pro Chat}
-    volumes:
-      - prochat-data:/app/data
+      WEB_ORIGIN: ${WEB_ORIGIN:-*}
     expose:
       - "3000"
   web:
@@ -23,5 +23,3 @@ services:
       - "8080:80"
     depends_on:
       - api
-volumes:
-  prochat-data:
