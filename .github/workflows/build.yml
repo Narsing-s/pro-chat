@@ -30,7 +30,6 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import re
           p=Path('apps/web/src/main.jsx')
           s=p.read_text(encoding='utf-8')
           start=s.index('function MessageBubble(')
@@ -39,11 +38,13 @@ jobs:
           s=s[:start]+replacement+s[end:]
           p.write_text(s,encoding='utf-8')
           PY
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add apps/web/src/main.jsx
-          git diff --cached --quiet || git commit -m "fix(web): simplify MessageBubble action JSX"
-          git diff --cached --quiet || git push origin main
+          if ! git diff --quiet -- apps/web/src/main.jsx; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add apps/web/src/main.jsx
+            git commit -m "fix(web): simplify MessageBubble action JSX"
+            git push origin main
+          fi
       - uses: actions/setup-node@v7
         with:
           node-version: 22
