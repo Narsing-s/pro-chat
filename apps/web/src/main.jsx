@@ -4,7 +4,6 @@ import {io} from 'socket.io-client';
 import {MessageCircle,Search,Plus,Send,Wifi,WifiOff,Phone,Video,MoreVertical,Check,CheckCheck,Users,LogOut,Mic,MicOff,Camera,CameraOff,PhoneOff} from 'lucide-react';
 import './styles.css';
 
-// Production/self-hosted mode uses the same origin for /api and Socket.IO. Local development uses port 3000.
 const API=import.meta.env.VITE_API_URL||( ['localhost','127.0.0.1','0.0.0.0'].includes(location.hostname) ? 'http://localhost:3000' : location.origin);
 const USER_KEY='pro-chat-user-v3',CHATS_KEY='pro-chat-chats-v3',MSG_KEY='pro-chat-messages-v3',OUTBOX_KEY='pro-chat-outbox-v1';
 const cid=(a,b)=>[a,b].sort().join(':');
@@ -13,44 +12,123 @@ if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.ser
 
 const RTC_CONFIG={iceServers:[
   {urls:'stun:stun.l.google.com:19302'},
-  {urls:'stun:stun1.l.google.com:19302'},
-  ...(import.meta.env.VITE_TURN_URL?[{urls:import.meta.env.VITE_TURN_URL,username:import.meta.env.VITE_TURN_USERNAME,credential:import.meta.env.VITE_TURN_CREDENTIAL}]:[])
+  ...(import.meta.env.VITE_TURN_URL?[{urls:import.meta.env.VITE_TURN_URL,username:import.meta.env.VITE_TURN_USERNAME,password:import.meta.env.VITE_TURN_PASSWORD}]:[])
 ]};
 
-const originalFetch=window.fetch.bind(window);
-window.fetch=(input,init={})=>{const u=read(USER_KEY,null);const headers=new Headers(init.headers||{});if(u?.token)headers.set('Authorization',`Bearer ${u.token}`);return originalFetch(input,{...init,headers})};
-
-function Call({socket,target,mode,incomingOffer,onClose}){
-  const [status,setStatus]=useState(incomingOffer?'Incoming call':'Calling…');
-  const [muted,setMuted]=useState(false),[videoOn,setVideoOn]=useState(mode==='video');
-  const pc=useRef(null),localVideo=useRef(null),remoteVideo=useRef(null),stream=useRef(null),iceQueue=useRef([]),closed=useRef(false);
-  const signal=(type,data={})=>socket.emit('call:signal',{targetUserId:target.userId,type,...data});
-  const close=()=>{if(closed.current)return;closed.current=true;stream.current?.getTracks().forEach(t=>t.stop());pc.current?.close();pc.current=null;onClose()};
-  const makePeer=()=>{const p=new RTCPeerConnection(RTC_CONFIG);pc.current=p;p.onicecandidate=e=>e.candidate&&signal('ice',{candidate:e.candidate});p.ontrack=e=>{if(remoteVideo.current)remoteVideo.current.srcObject=e.streams[0]};p.onconnectionstatechange=()=>{if(p.connectionState==='connected')setStatus('Connected');if(['failed','closed'].includes(p.connectionState)){setStatus('Call ended');setTimeout(close,300)}};return p};
-  const media=async()=>{if(!navigator.mediaDevices?.getUserMedia)throw Error('Camera/microphone requires HTTPS or the Android app.');const s=await navigator.mediaDevices.getUserMedia({audio:true,video:mode==='video'});stream.current=s;if(localVideo.current)localVideo.current.srcObject=s;s.getTracks().forEach(t=>pc.current.addTrack(t,s));};
-  useEffect(()=>{const onSignal=async m=>{try{if(m.senderUserId!==target.userId)return;if(m.type==='answer'&&pc.current){await pc.current.setRemoteDescription(m.sdp);for(const c of iceQueue.current)await pc.current.addIceCandidate(c);iceQueue.current=[];return}if(m.type==='ice'&&pc.current){if(pc.current.remoteDescription)await pc.current.addIceCandidate(m.candidate);else iceQueue.current.push(m.candidate);return}if(m.type==='hangup'){setStatus('Call ended');setTimeout(close,150)}}catch(e){setStatus(e.message||'Call error')}};socket.on('call:signal',onSignal);if(!incomingOffer)(async()=>{try{makePeer();await media();const offer=await pc.current.createOffer();await pc.current.setLocalDescription(offer);signal('offer',{sdp:pc.current.localDescription,mode})}catch(e){setStatus(e.message||'Unable to start call')}})();return()=>socket.off('call:signal',onSignal)},[]);
-  const accept=async()=>{try{makePeer();await media();await pc.current.setRemoteDescription(incomingOffer.sdp);const answer=await pc.current.createAnswer();await pc.current.setLocalDescription(answer);signal('answer',{sdp:pc.current.localDescription});setStatus('Connecting…')}catch(e){setStatus(e.message||'Unable to answer')}};
-  const reject=()=>{signal('hangup');close()};const toggleMic=()=>{const t=stream.current?.getAudioTracks()[0];if(t){t.enabled=!t.enabled;setMuted(!t.enabled)}};const toggleCam=()=>{const t=stream.current?.getVideoTracks()[0];if(t){t.enabled=!t.enabled;setVideoOn(t.enabled)}};
-  return <div className="call-overlay"><div className="call-card"><video className="remote-video" ref={remoteVideo} autoPlay playsInline/><video className="local-video" ref={localVideo} autoPlay muted playsInline/><div className="call-top"><b>{target.name}</b><span>{status}</span></div>{incomingOffer&&<div className="incoming"><b>Incoming {mode==='video'?'video':'voice'} call</b><div><button className="accept" onClick={accept}><Phone/></button><button className="reject" onClick={reject}><PhoneOff/></button></div></div>}<div className="call-controls"><button onClick={toggleMic}>{muted?<MicOff/>:<Mic/>}</button>{mode==='video'&&<button onClick={toggleCam}>{videoOn?<Camera/>:<CameraOff/>}</button>}<button className="hang" onClick={()=>{signal('hangup');close()}}><PhoneOff/></button></div></div></div>;
-}
-
 function App(){
-  const [me,setMe]=useState(()=>read(USER_KEY,null));
-  const [name,setName]=useState('');
-  const [chats,setChats]=useState(()=>{const u=read(USER_KEY,null);const saved=u?{id:`saved:${u.id}`,userId:u.id,name:'Saved Messages',online:false,text:'Your private offline space',time:''}:null;const existing=read(CHATS_KEY,[]);return existing.length?existing:(saved?[saved]:[])});
-  const [messages,setMessages]=useState(()=>read(MSG_KEY,{})),[outbox,setOutbox]=useState(()=>read(OUTBOX_KEY,[]));
-  const [active,setActive]=useState(null),[text,setText]=useState(''),[search,setSearch]=useState(''),[results,setResults]=useState([]),[online,setOnline]=useState(false),[typing,setTyping]=useState(false),[call,setCall]=useState(null),[incomingCall,setIncomingCall]=useState(null);
-  const socket=useMemo(()=>{const s=io(API,{autoConnect:false,reconnection:true,reconnectionAttempts:Infinity,reconnectionDelay:500});const u=read(USER_KEY,null);if(u?.token&&API)s.auth={token:u.token};return s},[]);
-  useEffect(()=>{localStorage.setItem(CHATS_KEY,JSON.stringify(chats))},[chats]);useEffect(()=>{localStorage.setItem(MSG_KEY,JSON.stringify(messages))},[messages]);useEffect(()=>{localStorage.setItem(OUTBOX_KEY,JSON.stringify(outbox))},[outbox]);
-  useEffect(()=>{if(!me||!API)return;socket.auth={token:me.token||''};const flush=()=>{setOnline(true);socket.emit('presence:join',me.id);chats.forEach(c=>socket.emit('chat:join',c.id));setOutbox(q=>{q.forEach(m=>socket.emit('message:send',m));return []})};const disc=()=>setOnline(false);const incoming=m=>{setMessages(x=>({...x,[m.chatId]:[...(x[m.chatId]||[]).filter(v=>v.id!==m.id),m]}));if(m.senderId!==me.id&&m.chatId===active)socket.emit('message:read',{chatId:m.chatId,messageId:m.id,userId:me.id})};const delivered=({messageId})=>setMessages(x=>{const n={...x};for(const k in n)n[k]=n[k].map(m=>m.id===messageId?{...m,delivered:true}:m);return n});const readReceipt=({messageId,chatId})=>setMessages(x=>{const n={...x};for(const k of chatId?[chatId]:Object.keys(n))n[k]=(n[k]||[]).map(m=>m.id===messageId?{...m,delivered:true,read:true}:m);return n});const presence=({userId,online:o})=>setChats(x=>x.map(c=>c.userId===userId?{...c,online:o}:c));const type=e=>{if(e.userId!==me.id){setTyping(!!e.typing);setTimeout(()=>setTyping(false),1800)}};const signal=m=>{if(m.type!=='offer'||m.senderUserId===me.id||call||incomingCall)return;const known=chats.find(c=>c.userId===m.senderUserId);if(known){setIncomingCall({userId:m.senderUserId,name:known.name,mode:m.mode||'video',offer:m});return}fetch(`${API}/api/users`).then(r=>r.json()).then(users=>{const u=users.find(x=>x.id===m.senderUserId);if(u)setIncomingCall({userId:u.id,name:u.name,mode:m.mode||'video',offer:m})}).catch(()=>{})};socket.on('connect',flush);socket.on('disconnect',disc);socket.on('message:new',incoming);socket.on('message:delivered',delivered);socket.on('message:read',readReceipt);socket.on('presence:update',presence);socket.on('typing',type);socket.on('call:signal',signal);socket.connect();return()=>{socket.off('connect',flush);socket.off('disconnect',disc);socket.off('message:new',incoming);socket.off('message:delivered',delivered);socket.off('message:read',readReceipt);socket.off('presence:update',presence);socket.off('typing',type);socket.off('call:signal',signal);socket.disconnect()};},[me]);
-  useEffect(()=>{if(!active||!me||!API)return;const rows=messages[active]||[];rows.filter(m=>m.senderId!==me.id&&!m.read).forEach(m=>socket.emit('message:read',{chatId:active,messageId:m.id,userId:me.id}))},[active,messages]);
-  async function register(){const n=name.trim();if(n.length<2)return;const old=read(USER_KEY,null);try{const r=await fetch(`${API}/api/users`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:old?.id,name:n})});if(!r.ok)return;const u=await r.json();localStorage.setItem(USER_KEY,JSON.stringify(u));setMe(u)}catch{}}
-  async function find(q=search){q=q.trim();if(!q){setResults([]);return}const local=chats.filter(c=>c.userId!==me.id&&c.name.toLowerCase().includes(q.toLowerCase()));if(!API){setResults(local);return}try{const r=await fetch(`${API}/api/users?q=${encodeURIComponent(q)}`);setResults((await r.json()).filter(u=>u.id!==me.id))}catch{setResults(local)}}
-  async function openUser(u){const id=cid(me.id,u.id);setChats(x=>x.some(c=>c.id===id)?x:x.concat({id,userId:u.id,name:u.name,online:!!u.online,text:'',time:''}));setActive(id);setResults([]);setSearch('');if(API){socket.emit('chat:join',id);try{const r=await fetch(`${API}/api/messages/${encodeURIComponent(id)}`);const data=await r.json();setMessages(x=>({...x,[id]:data}));data.filter(m=>m.senderId!==me.id&&!m.read).forEach(m=>socket.emit('message:read',{chatId:id,messageId:m.id,userId:me.id}))}catch{}}}
-  function send(){const value=text.trim();if(!value||!active)return;const createdAt=new Date().toISOString(),m={id:crypto.randomUUID(),chatId:active,senderId:me.id,text:value,createdAt,delivered:false,read:false};setMessages(x=>({...x,[active]:[...(x[active]||[]),m]}));setChats(x=>x.map(c=>c.id===active?{...c,text:value,time:new Date(createdAt).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}:c));if(online)socket.emit('message:send',m);else setOutbox(q=>q.concat(m));setText('')}
-  function startCall(mode){const current=chats.find(c=>c.id===active);if(current&&!call&&!incomingCall&&online)setCall({userId:current.userId,name:current.name,mode})}function logout(){localStorage.removeItem(USER_KEY);setMe(null);socket.disconnect()}
-  if(!me)return <div className="auth"><div className="auth-card"><div className="logo big">P</div><h1>Welcome to Pro Chat</h1><p>Private, realtime and offline-first.</p><input autoFocus value={name} onChange={e=>setName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&register()} placeholder="Your display name"/><button className="primary" onClick={register}>Continue</button><small>Use Create Account or Login above. Your account stays on this device when offline.</small></div></div>;
-  const current=chats.find(c=>c.id===active),rows=active?messages[active]||[]:[];
-  return <div className="app"><aside><div className="brand"><div className="logo">P</div><div><b>Pro Chat</b><small>{me.name}</small></div><button className="icon" onClick={logout}><LogOut size={17}/></button></div><div className="search"><Search size={17}/><input placeholder="Find people or local chats" value={search} onChange={e=>{setSearch(e.target.value);find(e.target.value)}}/></div>{results.length>0&&<div className="results">{results.map(u=><button key={u.id} onClick={()=>openUser(u)}><div className="avatar">{u.name[0]}</div><div><b>{u.name}</b><span>{u.online?'online':'offline'}</span></div></button>)}</div>}<div className="section">CHATS <button className="icon" onClick={()=>document.querySelector('.search input')?.focus()}><Plus size={16}/></button></div><div className="chat-list">{chats.map(c=><button className={'chat '+(c.id===active?'active':'')} onClick={()=>{setActive(c.id);if(API)socket.emit('chat:join',c.id)}} key={c.id}><div className="avatar">{c.name[0]}</div><div className="meta"><b>{c.name}</b><span>{c.text||'Start chatting'}</span></div><time>{c.time}</time></button>)}</div><div className="connection">{online?<><Wifi size={15}/> Realtime connected</>:<><WifiOff size={15}/> Server unavailable — local messages are saved</>}</div></aside><main><header>{current?<><div className="peer"><div className="avatar">{current.name[0]}</div><div><b>{current.name}</b><span>{typing?'typing…':current.online?'online':'offline'}</span></div></div><div className="actions"><button title={online?'Voice call':'Connect to a server for calls'} disabled={!online} onClick={()=>startCall('audio')}><Phone/></button><button title={online?'Video call':'Connect to a server for calls'} disabled={!online} onClick={()=>startCall('video')}><Video/></button><button><MoreVertical/></button></div></>:<div className="peer"><div className="avatar"><MessageCircle/></div><div><b>Pro Chat</b><span>Choose a conversation</span></div></div>}</header><section className="messages">{!current&&<div className="empty"><div className="empty-icon"><Users/></div><h2>Ready to chat</h2><p>Choose a conversation to start messaging.</p></div>}{current&&rows.length===0&&<div className="empty"><div className="empty-icon"><MessageCircle/></div><h2>{current.name==='Saved Messages'?'Your private space':'Start a conversation'}</h2><p>{current.name==='Saved Messages'?'Messages stay on this device.':'Say hello to '+current.name+'.'}</p></div>}{rows.map(m=><div className={'bubble-row '+(m.senderId===me.id?'mine':'')} key={m.id}><div className="bubble">{m.text}<small>{new Date(m.createdAt).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})} {m.senderId===me.id&&(m.read?<CheckCheck className="read" size={14}/>:m.delivered?<CheckCheck size={14}/>:<Check size={14}/>)}</small></div></div>)}</section>{current&&<footer><input value={text} onChange={e=>{setText(e.target.value);if(online)socket.emit('typing',{chatId:active,userId:me.id,typing:true})}} onKeyDown={e=>e.key==='Enter'&&send()} placeholder="Write a message…"/><button className="send" onClick={send}><Send size={19}/></button></footer>}</main>{call&&<Call socket={socket} target={call} mode={call.mode} onClose={()=>setCall(null)}/>} {incomingCall&&<Call socket={socket} target={incomingCall} mode={incomingCall.mode} incomingOffer={incomingCall.offer} onClose={()=>setIncomingCall(null)}/>}</div>;
+  const me=read(USER_KEY,null);
+  const [chats,setChats]=useState(()=>read(CHATS_KEY,[]));
+  const [messages,setMessages]=useState(()=>read(MSG_KEY,{}));
+  const [search,setSearch]=useState('');
+  const [results,setResults]=useState([]);
+  const [searching,setSearching]=useState(false);
+  const [searchError,setSearchError]=useState('');
+  const [active,setActive]=useState(null);
+  const [text,setText]=useState('');
+  const [online,setOnline]=useState(false);
+  const socketRef=useRef(null);
+
+  useEffect(()=>localStorage.setItem(CHATS_KEY,JSON.stringify(chats)),[chats]);
+  useEffect(()=>localStorage.setItem(MSG_KEY,JSON.stringify(messages)),[messages]);
+
+  useEffect(()=>{
+    if(!me?.token)return;
+    const socket=io(API,{auth:{token:me.token},transports:['websocket','polling'],reconnection:true});
+    socketRef.current=socket;
+    socket.on('connect',()=>{setOnline(true);flushOutbox(socket)});
+    socket.on('disconnect',()=>setOnline(false));
+    socket.on('message',m=>receiveMessage(m));
+    socket.on('message:ack',m=>receiveMessage(m));
+    return()=>{socket.disconnect();socketRef.current=null};
+  },[me?.token]);
+
+  function receiveMessage(m){
+    if(!m?.chatId||!m?.id)return;
+    setMessages(prev=>({...prev,[m.chatId]:[...(prev[m.chatId]||[]).filter(x=>x.id!==m.id),m].sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt))}));
+    setChats(prev=>{
+      const otherId=m.senderId===me.id?m.receiverId:m.senderId;
+      const old=prev.find(c=>c.id===m.chatId);
+      if(old)return prev.map(c=>c.id===m.chatId?{...c,lastMessage:m.text,lastAt:m.createdAt}:c);
+      return [{id:m.chatId,userId:otherId,name:m.senderName||'Contact',username:m.senderUsername||'',lastMessage:m.text,lastAt:m.createdAt},...prev];
+    });
+  }
+
+  async function flushOutbox(socket){
+    const queue=read(OUTBOX_KEY,[]);
+    if(!queue.length)return;
+    const remaining=[];
+    for(const m of queue){
+      try{socket.emit('message',m)}catch{remaining.push(m)}
+    }
+    localStorage.setItem(OUTBOX_KEY,JSON.stringify(remaining));
+  }
+
+  async function find(q=search){
+    const value=q.trim();
+    setSearchError('');
+    if(!value){setResults([]);return}
+    setSearching(true);
+    try{
+      const r=await fetch(`${API}/api/users?q=${encodeURIComponent(value)}`,{
+        headers:me?.token?{Authorization:`Bearer ${me.token}`}:{},
+        cache:'no-store'
+      });
+      const data=await r.json().catch(()=>[]);
+      if(!r.ok)throw Error(data?.error||`Search failed (${r.status})`);
+      const users=Array.isArray(data)?data:[];
+      setResults(users.filter(u=>u.id!==me?.id));
+      if(!users.length)setSearchError('No Pro Chat user found. Try the exact username, email or phone number.');
+    }catch(e){
+      setResults([]);
+      setSearchError(e.message==='Failed to fetch'||e.name==='TypeError'
+        ?'Cannot reach the Pro Chat server. Search requires both accounts to use the same reachable server.'
+        :(e.message||'Unable to search users.'));
+    }finally{setSearching(false)}
+  }
+
+  async function openUser(user){
+    if(!user?.id||user.id===me?.id)return;
+    const id=cid(me.id,user.id);
+    setActive(id);
+    setSearch('');setResults([]);setSearchError('');
+    setChats(prev=>prev.some(c=>c.id===id)?prev:[{id,userId:user.id,name:user.name||user.username||'Contact',username:user.username||'',email:user.email||'',phoneNumber:user.phoneNumber||'',lastMessage:'',lastAt:user.createdAt||new Date().toISOString()},...prev]);
+    const socket=socketRef.current;
+    if(socket)socket.emit('join',id);
+    try{
+      const r=await fetch(`${API}/api/messages/${encodeURIComponent(id)}`,{headers:me?.token?{Authorization:`Bearer ${me.token}`}:{},cache:'no-store'});
+      if(r.ok){const data=await r.json();setMessages(prev=>({...prev,[id]:Array.isArray(data)?data:[]}))}
+    }catch{}
+  }
+
+  function send(){
+    const value=text.trim();
+    if(!value||!active||!me)return;
+    const chat=chats.find(c=>c.id===active);if(!chat)return;
+    const m={id:crypto.randomUUID(),chatId:active,senderId:me.id,senderName:me.name,senderUsername:me.username,receiverId:chat.userId,text:value,createdAt:new Date().toISOString(),status:'sent'};
+    receiveMessage(m);setText('');
+    const socket=socketRef.current;
+    if(socket?.connected){socket.emit('message',m)}else{
+      const queue=read(OUTBOX_KEY,[]);queue.push(m);localStorage.setItem(OUTBOX_KEY,JSON.stringify(queue));
+    }
+  }
+
+  function logout(){localStorage.removeItem(USER_KEY);location.replace(location.pathname)}
+  const activeChat=chats.find(c=>c.id===active);
+  const activeMessages=active?(messages[active]||[]):[];
+
+  if(!me)return null;
+  return <div className="app-shell">
+    <aside className="sidebar">
+      <div className="brand"><MessageCircle size={25}/><strong>Pro Chat</strong><span className={online?'online-dot':'offline-dot'} title={online?'Connected':'Offline'} /></div>
+      <div className="me-row"><div className="avatar">{(me.username||me.name||'P')[0].toUpperCase()}</div><div className="me-info"><b>{me.username||me.name}</b><small>{me.email||me.phoneNumber||''}</small></div><button onClick={logout} title="Logout"><LogOut size={18}/></button></div>
+      <div className="search-box"><Search size={18}/><input value={search} onChange={e=>{setSearch(e.target.value);if(!e.target.value.trim()){setResults([]);setSearchError('')}}} onKeyDown={e=>e.key==='Enter'&&find()} placeholder="Search username, email or phone"/><button onClick={()=>find()} disabled={searching}>{searching?'…':'Search'}</button></div>
+      {(results.length>0||searchError)&&<div className="search-results">{results.map(u=><button className="user-result" key={u.id} onClick={()=>openUser(u)}><div className="avatar">{(u.username||u.name||'P')[0].toUpperCase()}</div><div><b>{u.username?`@${u.username}`:u.name}</b><span>{u.name}{u.email?' • '+u.email:''}</span></div><MessageCircle size={18}/></button>)}{searchError&&<div className="search-error">{searchError}</div>}</div>}
+      <div className="chat-list">{chats.map(c=><button key={c.id} className={'chat-row '+(active===c.id?'active':'')} onClick={()=>openUser(c)}><div className="avatar">{(c.username||c.name||'P')[0].toUpperCase()}</div><div className="chat-meta"><b>{c.username?`@${c.username}`:c.name}</b><span>{c.lastMessage||'Start a conversation'}</span></div></button>)}</div>
+    </aside>
+    <main className="chat-panel">
+      {activeChat?<><header className="chat-header"><div className="avatar">{(activeChat.username||activeChat.name||'P')[0].toUpperCase()}</div><div><b>{activeChat.username?`@${activeChat.username}`:activeChat.name}</b><small>{activeChat.name}{activeChat.email?' • '+activeChat.email:''}</small></div><div className="chat-actions"><Phone size={19}/><Video size={20}/><MoreVertical size={20}/></div></header><section className="messages">{activeMessages.map(m=><div key={m.id} className={'bubble '+(m.senderId===me.id?'mine':'theirs')}><span>{m.text}</span><small>{new Date(m.createdAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})} {m.senderId===me.id&&(m.status==='sent'?<Check size={13}/>:<CheckCheck size={13}/>)}</small></div>)}</section><footer className="composer"><input value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>e.key==='Enter'&&!e.shiftKey&&(e.preventDefault(),send())} placeholder="Type a message"/><button onClick={send} disabled={!text.trim()}><Send size={20}/></button></footer></>:<div className="empty-state"><MessageCircle size={56}/><h2>Pro Chat</h2><p>Search a username, email or phone number to start a private conversation.</p></div>}
+    </main>
+  </div>
 }
+
 createRoot(document.getElementById('root')).render(<App/>);
