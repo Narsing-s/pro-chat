@@ -1,5 +1,6 @@
 (() => {
-  const API = window.__PRO_CHAT_API__ || window.location.origin;
+  const isLocal = ['localhost','127.0.0.1','0.0.0.0'].includes(window.location.hostname);
+  const API = window.__PRO_CHAT_API__ || (isLocal ? 'http://localhost:3000' : window.location.origin);
   const style = document.createElement('style');
   style.textContent = `
     .pro-auth-overlay{position:fixed;inset:0;z-index:99999;display:grid;place-items:center;background:radial-gradient(circle at 20% 10%,#173b70 0,#07111f 38%,#050811 100%);padding:20px;font-family:system-ui,-apple-system,sans-serif}
@@ -14,15 +15,21 @@
 
   const originalFetch = window.fetch.bind(window);
   const request = async (path, body) => {
-    const r = await originalFetch(API + path, {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+    let r;
+    try {
+      r = await originalFetch(`${API}${path}`, {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+    } catch (e) {
+      throw new Error(`Cannot reach Pro Chat server at ${API}. Start the server or configure VITE_API_URL.`);
+    }
     const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.error || 'Request failed');
+    if (!r.ok) throw new Error(data.error || `Request failed (${r.status})`);
     return data;
   };
 
   function saveUser(user) {
+    if (!user?.id || !user?.token) throw new Error('Server returned an invalid account session.');
     localStorage.setItem('pro-chat-user-v3', JSON.stringify(user));
-    location.href = location.pathname;
+    window.location.replace(window.location.pathname);
   }
 
   function mount() {
@@ -34,7 +41,7 @@
 
     const overlay = document.createElement('div');
     overlay.className = 'pro-auth-overlay';
-    overlay.innerHTML = `<div class="pro-auth-card"><div class="pro-auth-logo">P</div><h1 id="pro-auth-title">Welcome to Pro Chat</h1><p id="pro-auth-sub">Create your account to start messaging.</p><div id="pro-auth-fields"></div><div class="pro-auth-error" id="pro-auth-msg"></div><button class="pro-auth-primary" id="pro-auth-submit">Create Account</button><button class="pro-auth-switch" id="pro-auth-switch">Already have an account? Login</button><button class="pro-auth-forgot" id="pro-auth-forgot">Forgot Password?</button><div class="pro-auth-note">Your password is securely hashed on the server. You can use your username, email, or phone number to log in.</div></div>`;
+    overlay.innerHTML = `<div class="pro-auth-card"><div class="pro-auth-logo">P</div><h1 id="pro-auth-title">Welcome to Pro Chat</h1><p id="pro-auth-sub">Create your account to start messaging.</p><div id="pro-auth-fields"></div><div class="pro-auth-error" id="pro-auth-msg"></div><button type="button" class="pro-auth-primary" id="pro-auth-submit">Create Account</button><button type="button" class="pro-auth-switch" id="pro-auth-switch">Already have an account? Login</button><button type="button" class="pro-auth-forgot" id="pro-auth-forgot">Forgot Password?</button><div class="pro-auth-note">Your password is securely hashed on the server. You can use your username, email, or phone number to log in.</div></div>`;
     document.body.appendChild(overlay);
 
     const fields = overlay.querySelector('#pro-auth-fields'), submit = overlay.querySelector('#pro-auth-submit'), sw = overlay.querySelector('#pro-auth-switch'), forgot = overlay.querySelector('#pro-auth-forgot'), msg = overlay.querySelector('#pro-auth-msg'), sub = overlay.querySelector('#pro-auth-sub'), title = overlay.querySelector('#pro-auth-title');
@@ -45,28 +52,23 @@
     function render() {
       msg.textContent=''; msg.className='pro-auth-error';
       if (resetMode) {
-        title.textContent='Reset your password';
-        sub.textContent='Choose a new password for your Pro Chat account.';
+        title.textContent='Reset your password'; sub.textContent='Choose a new password for your Pro Chat account.';
         fields.innerHTML = input('password','New password','password','At least 8 characters','new-password') + input('confirm','Confirm password','password','Re-enter your new password','new-password');
         submit.textContent='Reset Password'; sw.textContent='Back to Login'; sw.style.display='block'; forgot.style.display='none';
       } else if (register) {
-        title.textContent='Welcome to Pro Chat';
-        sub.textContent='Create your account to start messaging.';
-        fields.innerHTML = input('email','Email','email','you@example.com') + input('phone','Phone number','tel','+1 555 123 4567') + input('username','Username','text','Choose a username') + input('password','Password','password','Create a password','new-password') + input('confirm','Confirm password','password','Re-enter your password','new-password');
+        title.textContent='Create your Pro Chat account'; sub.textContent='Enter your details to create a new account.';
+        fields.innerHTML = input('email','Email','email','you@example.com') + input('phone','Phone number','tel','+1 555 123 4567') + input('username','Username','text','Choose a username','username') + input('password','Password','password','At least 8 characters','new-password') + input('confirm','Confirm password','password','Re-enter your password','new-password');
         submit.textContent='Create Account'; sw.textContent='Already have an account? Login'; sw.style.display='block'; forgot.style.display='none';
       } else {
-        title.textContent='Welcome back';
-        sub.textContent='Login with your username, email, or phone number.';
-        fields.innerHTML = input('identifier','Username, Email or Phone','text','Username / email / phone') + input('password','Password','password','Your password','current-password');
+        title.textContent='Welcome back'; sub.textContent='Login with your username, email, or phone number.';
+        fields.innerHTML = input('identifier','Username, Email or Phone','text','Username / email / phone','username') + input('password','Password','password','Your password','current-password');
         submit.textContent='Login'; sw.textContent='New to Pro Chat? Create Account'; sw.style.display='block'; forgot.style.display='block';
       }
+      fields.querySelector('input')?.focus();
     }
 
     render();
-    sw.onclick=()=>{
-      if(resetMode){ resetMode=false; register=false; history.replaceState({},'',location.pathname); render(); return; }
-      register=!register; render();
-    };
+    sw.onclick=()=>{ if(resetMode){resetMode=false;register=false;history.replaceState({},'',location.pathname);render();return;} register=!register;render(); };
     forgot.onclick=async()=>{
       const identifier=fields.querySelector('#identifier')?.value.trim();
       if(!identifier){msg.textContent='Enter your email, username, or phone number first.';return;}
@@ -74,7 +76,7 @@
       try{const d=await request('/api/auth/forgot-password',{identifier});msg.textContent=d.message||'If the account exists, password reset instructions have been requested.';msg.className='pro-auth-error pro-auth-success'}catch(e){msg.textContent=e.message}finally{forgot.disabled=false}
     };
     submit.onclick=async()=>{
-      msg.textContent=''; submit.disabled=true;
+      msg.textContent=''; msg.className='pro-auth-error'; submit.disabled=true;
       try {
         let user;
         if(resetMode){
@@ -83,9 +85,7 @@
           if(password!==confirm) throw Error('Passwords do not match.');
           if(password.length<8) throw Error('Password must be at least 8 characters.');
           await request('/api/auth/reset-password',{token:resetToken,password});
-          resetMode=false; register=false; history.replaceState({},'',location.pathname); render();
-          msg.textContent='Password reset successfully. Please login with your new password.'; msg.className='pro-auth-error pro-auth-success';
-          return;
+          resetMode=false;register=false;history.replaceState({},'',location.pathname);render();msg.textContent='Password reset successfully. Please login with your new password.';msg.className='pro-auth-error pro-auth-success';return;
         }
         if(register){
           const email=fields.querySelector('#email').value.trim(),phoneNumber=fields.querySelector('#phone').value.trim(),username=fields.querySelector('#username').value.trim(),password=fields.querySelector('#password').value,confirm=fields.querySelector('#confirm').value;
