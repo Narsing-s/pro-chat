@@ -5,9 +5,11 @@ import './styles.css';
 
 const isLocalHost=['localhost','127.0.0.1','0.0.0.0'].includes(location.hostname);
 const isGitHubPages=/\.github\.io$/i.test(location.hostname);
+const isViteDev=location.port==='5173'||location.port==='4173';
 const CONFIG_API=import.meta.env.VITE_API_URL||window.__PRO_CHAT_API__||'';
 const LOCAL_MODE=isGitHubPages&&!CONFIG_API;
-const API=CONFIG_API||(isLocalHost?'http://localhost:3000':location.origin);
+const localApiHost=location.hostname==='0.0.0.0'?'localhost':location.hostname;
+const API=CONFIG_API||(isLocalHost||isViteDev?`http://${localApiHost}:3000`:location.origin);
 const USER_KEY='pro-chat-user-v3',CHATS_KEY='pro-chat-chats-v3',MSG_KEY='pro-chat-messages-v3',OUTBOX_KEY='pro-chat-outbox-v1';
 const cid=(a,b)=>[a,b].sort().join(':');
 const read=(k,f)=>{try{return JSON.parse(localStorage.getItem(k))??f}catch{return f}};
