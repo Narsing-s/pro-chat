@@ -15,25 +15,38 @@ jobs:
         with:
           api_token: ${{ secrets.KOYEB_API_TOKEN }}
 
-      - name: Create DATABASE_URL secret in Koyeb
+      - name: Validate required GitHub secrets
+        env:
+          KOYEB_API_TOKEN: ${{ secrets.KOYEB_API_TOKEN }}
+          DATABASE_URL: ${{ secrets.PRO_CHAT_DATABASE_URL }}
+          SESSION_SECRET: ${{ secrets.PRO_CHAT_SESSION_SECRET }}
+          WEB_ORIGIN: ${{ secrets.PRO_CHAT_WEB_ORIGIN }}
+        run: |
+          test -n "$KOYEB_API_TOKEN" || { echo "Missing KOYEB_API_TOKEN"; exit 1; }
+          test -n "$DATABASE_URL" || { echo "Missing PRO_CHAT_DATABASE_URL"; exit 1; }
+          test -n "$SESSION_SECRET" || { echo "Missing PRO_CHAT_SESSION_SECRET"; exit 1; }
+          test -n "$WEB_ORIGIN" || { echo "Missing PRO_CHAT_WEB_ORIGIN"; exit 1; }
+          test "${#SESSION_SECRET}" -ge 32 || { echo "PRO_CHAT_SESSION_SECRET must be at least 32 characters"; exit 1; }
+
+      - name: Create/update Koyeb database secret
         uses: koyeb/action-git-deploy/secret@v1
         with:
           secret-name: PRO_CHAT_DATABASE_URL
           secret-value: ${{ secrets.PRO_CHAT_DATABASE_URL }}
 
-      - name: Create SESSION_SECRET secret in Koyeb
+      - name: Create/update Koyeb session secret
         uses: koyeb/action-git-deploy/secret@v1
         with:
           secret-name: PRO_CHAT_SESSION_SECRET
           secret-value: ${{ secrets.PRO_CHAT_SESSION_SECRET }}
 
-      - name: Create WEB_ORIGIN secret in Koyeb
+      - name: Create/update Koyeb web origin secret
         uses: koyeb/action-git-deploy/secret@v1
         with:
           secret-name: PRO_CHAT_WEB_ORIGIN
           secret-value: ${{ secrets.PRO_CHAT_WEB_ORIGIN }}
 
-      - name: Build and deploy Pro Chat API
+      - name: Deploy Pro Chat API
         uses: koyeb/action-git-deploy@v1
         with:
           app-name: pro-chat
@@ -42,7 +55,7 @@ jobs:
           git-branch: main
           git-builder: docker
           git-docker-dockerfile: apps/server/Dockerfile.koyeb
-          service-instance-type: free
+          service-instance-type: nano
           service-ports: "3000:http"
           service-routes: "/:3000"
           service-checks: "3000:http:/health"
