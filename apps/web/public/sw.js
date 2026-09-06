@@ -1,4 +1,4 @@
-const CACHE='pro-chat-shell-v2';
+const CACHE='pro-chat-shell-v3';
 const BASE=self.registration.scope;
 const SHELL=[BASE,`${BASE}index.html`,`${BASE}manifest.webmanifest`];
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting())));
