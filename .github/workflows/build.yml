@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   VITE_API_URL: ${{ vars.PRO_CHAT_API_URL }}
@@ -14,46 +14,31 @@ env:
 jobs:
   verify-server:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+          cache: npm
       - run: npm install
       - run: npm run build -w apps/server
 
   web:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
-      - name: Repair MessageBubble JSX
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('apps/web/src/main.jsx')
-          s=p.read_text(encoding='utf-8')
-          start=s.index('function MessageBubble(')
-          end=s.index('function AttachmentMenu(', start)
-          replacement='''function MessageBubble({m,mine,onEdit,onDelete,onReply,onStar,onReact,onPin,onForward,onInfo,starred,selected,setSelected}){const[open,setOpen]=useState(false);return <div className={`bubble-row ${mine?'mine':''}`}><div className={`bubble ${m.deleted?'deleted':''} ${selected?'selected':''}`} onContextMenu={e=>{e.preventDefault();setOpen(v=>!v)}} onClick={()=>setSelected(m.id)}><div className="bubble-text">{m.deleted?'This message was deleted':m.text}</div>{m.replyTo&&<div className="quoted">↩ Replied message</div>}<small>{m.edited&&'Edited · '}{new Date(m.createdAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})} {mine&&(m.read?<CheckCheck size={13}/>:<Check size={13}/>)}</small>{open&&<div className="message-menu"><button onClick={()=>{onReply(m);setOpen(false)}}><Reply/> Reply</button><button onClick={()=>{onStar(m);setOpen(false)}}><Star/> {starred?'Unstar':'Star'}</button><button onClick={()=>{navigator.clipboard?.writeText(m.text);setOpen(false)}}><FileText/> Copy</button><button onClick={()=>{onForward(m);setOpen(false)}}><Forward/> Forward</button><button onClick={()=>{onReact(m);setOpen(false)}}>❤️ React</button><button onClick={()=>{onPin(m);setOpen(false)}}><Pin/> {m.pinned?'Unpin':'Pin'}</button><button onClick={()=>{onInfo(m);setOpen(false)}}><Eye/> Message info</button>{mine&&!m.deleted&&<><button onClick={()=>{onEdit(m);setOpen(false)}}><Edit3/> Edit</button><button onClick={()=>{onDelete(m,false);setOpen(false)}}><Trash2/> Delete for me</button><button onClick={()=>{onDelete(m,true);setOpen(false)}}><Trash2/> Delete for everyone</button></>}<button onClick={()=>setOpen(false)}><Flag/> Report</button></div>}</div></div>}\n'''
-          s=s[:start]+replacement+s[end:]
-          p.write_text(s,encoding='utf-8')
-          PY
-          if ! git diff --quiet -- apps/web/src/main.jsx; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add apps/web/src/main.jsx
-            git commit -m "fix(web): simplify MessageBubble action JSX"
-            git push origin main
-          fi
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+          cache: npm
       - name: Write public API runtime config
         run: |
           if [ -n "$VITE_API_URL" ]; then
             printf 'window.__PRO_CHAT_API__=%s;\n' "$(printf '%s' "$VITE_API_URL" | python -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" > apps/web/public/runtime-config.js
           else
-            printf 'window.__PRO_CHAT_API__=\"\";\n' > apps/web/public/runtime-config.js
+            printf 'window.__PRO_CHAT_API__="";\n' > apps/web/public/runtime-config.js
           fi
       - run: npm install
       - run: npm run build -w apps/web
@@ -66,29 +51,19 @@ jobs:
 
   android:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
-      - name: Repair MessageBubble JSX
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('apps/web/src/main.jsx')
-          s=p.read_text(encoding='utf-8')
-          start=s.index('function MessageBubble(')
-          end=s.index('function AttachmentMenu(', start)
-          replacement='''function MessageBubble({m,mine,onEdit,onDelete,onReply,onStar,onReact,onPin,onForward,onInfo,starred,selected,setSelected}){const[open,setOpen]=useState(false);return <div className={`bubble-row ${mine?'mine':''}`}><div className={`bubble ${m.deleted?'deleted':''} ${selected?'selected':''}`} onContextMenu={e=>{e.preventDefault();setOpen(v=>!v)}} onClick={()=>setSelected(m.id)}><div className="bubble-text">{m.deleted?'This message was deleted':m.text}</div>{m.replyTo&&<div className="quoted">↩ Replied message</div>}<small>{m.edited&&'Edited · '}{new Date(m.createdAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})} {mine&&(m.read?<CheckCheck size={13}/>:<Check size={13}/>)}</small>{open&&<div className="message-menu"><button onClick={()=>{onReply(m);setOpen(false)}}><Reply/> Reply</button><button onClick={()=>{onStar(m);setOpen(false)}}><Star/> {starred?'Unstar':'Star'}</button><button onClick={()=>{navigator.clipboard?.writeText(m.text);setOpen(false)}}><FileText/> Copy</button><button onClick={()=>{onForward(m);setOpen(false)}}><Forward/> Forward</button><button onClick={()=>{onReact(m);setOpen(false)}}>❤️ React</button><button onClick={()=>{onPin(m);setOpen(false)}}><Pin/> {m.pinned?'Unpin':'Pin'}</button><button onClick={()=>{onInfo(m);setOpen(false)}}><Eye/> Message info</button>{mine&&!m.deleted&&<><button onClick={()=>{onEdit(m);setOpen(false)}}><Edit3/> Edit</button><button onClick={()=>{onDelete(m,false);setOpen(false)}}><Trash2/> Delete for me</button><button onClick={()=>{onDelete(m,true);setOpen(false)}}><Trash2/> Delete for everyone</button></>}<button onClick={()=>setOpen(false)}><Flag/> Report</button></div>}</div></div>}\n'''
-          s=s[:start]+replacement+s[end:]
-          p.write_text(s,encoding='utf-8')
-          PY
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+          cache: npm
       - name: Write public API runtime config
         run: |
           if [ -n "$VITE_API_URL" ]; then
             printf 'window.__PRO_CHAT_API__=%s;\n' "$(printf '%s' "$VITE_API_URL" | python -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" > apps/web/public/runtime-config.js
           else
-            printf 'window.__PRO_CHAT_API__=\"\";\n' > apps/web/public/runtime-config.js
+            printf 'window.__PRO_CHAT_API__="";\n' > apps/web/public/runtime-config.js
           fi
       - run: npm install
       - run: npm run build -w apps/web
