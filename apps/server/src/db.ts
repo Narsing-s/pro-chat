@@ -160,6 +160,35 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS pro_chat_messages_sender_idx ON pro_chat_messages(sender_id);
     CREATE INDEX IF NOT EXISTS pro_chat_messages_search_idx ON pro_chat_messages USING GIN (to_tsvector('simple', text));
 
+    ALTER TABLE pro_chat_messages ADD COLUMN IF NOT EXISTS reply_to_id TEXT REFERENCES pro_chat_messages(id) ON DELETE SET NULL;
+    ALTER TABLE pro_chat_messages ADD COLUMN IF NOT EXISTS forwarded_from_id TEXT REFERENCES pro_chat_messages(id) ON DELETE SET NULL;
+    CREATE INDEX IF NOT EXISTS pro_chat_messages_reply_idx ON pro_chat_messages(reply_to_id);
+    CREATE INDEX IF NOT EXISTS pro_chat_messages_forward_idx ON pro_chat_messages(forwarded_from_id);
+
+    CREATE TABLE IF NOT EXISTS pro_chat_message_deleted_for_me(
+      message_id TEXT NOT NULL REFERENCES pro_chat_messages(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES pro_chat_users(id) ON DELETE CASCADE,
+      deleted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY(message_id,user_id)
+    );
+    CREATE INDEX IF NOT EXISTS pro_chat_message_deleted_user_idx ON pro_chat_message_deleted_for_me(user_id,deleted_at DESC);
+
+    CREATE TABLE IF NOT EXISTS pro_chat_message_reactions(
+      message_id TEXT NOT NULL REFERENCES pro_chat_messages(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES pro_chat_users(id) ON DELETE CASCADE,
+      emoji TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY(message_id,user_id)
+    );
+    CREATE INDEX IF NOT EXISTS pro_chat_message_reactions_message_idx ON pro_chat_message_reactions(message_id);
+
+    CREATE TABLE IF NOT EXISTS pro_chat_message_pins(
+      message_id TEXT PRIMARY KEY REFERENCES pro_chat_messages(id) ON DELETE CASCADE,
+      pinned_by TEXT NOT NULL REFERENCES pro_chat_users(id) ON DELETE CASCADE,
+      pinned_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS pro_chat_message_pins_user_idx ON pro_chat_message_pins(pinned_by,pinned_at DESC);
+
     CREATE TABLE IF NOT EXISTS pro_chat_blocks(blocker_id TEXT NOT NULL REFERENCES pro_chat_users(id) ON DELETE CASCADE,blocked_id TEXT NOT NULL REFERENCES pro_chat_users(id) ON DELETE CASCADE,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),PRIMARY KEY(blocker_id,blocked_id));
     CREATE TABLE IF NOT EXISTS pro_chat_groups(id TEXT PRIMARY KEY,name TEXT NOT NULL,description TEXT,created_by TEXT NOT NULL REFERENCES pro_chat_users(id),created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
     CREATE TABLE IF NOT EXISTS pro_chat_group_members(group_id TEXT NOT NULL REFERENCES pro_chat_groups(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES pro_chat_users(id) ON DELETE CASCADE,role TEXT NOT NULL DEFAULT 'member',created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),PRIMARY KEY(group_id,user_id));
