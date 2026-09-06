@@ -24,6 +24,8 @@ jobs:
   release:
     runs-on: ubuntu-latest
     environment: production
+    env:
+      VITE_API_URL: ${{ vars.PRO_CHAT_API_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -53,6 +55,16 @@ PY
 )
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+
+      - name: Validate production API configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$VITE_API_URL" || { echo "Missing GitHub Actions repository variable: PRO_CHAT_API_URL"; exit 1; }
+          case "$VITE_API_URL" in
+            https://*) ;;
+            *) echo "PRO_CHAT_API_URL must use HTTPS"; exit 1 ;;
+          esac
 
       - name: Validate release secrets
         env:
@@ -89,6 +101,20 @@ PY
       - name: Install dependencies
         run: npm install
 
+      - name: Write Android production API runtime config
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          api = os.environ['VITE_API_URL'].rstrip('/')
+          Path('apps/web/public/runtime-config.js').write_text(
+              'window.__PRO_CHAT_API__=' + json.dumps(api) + ';\n',
+              encoding='utf-8'
+          )
+          PY
+
       - name: Build web
         run: npm run build -w apps/web
 
@@ -117,20 +143,20 @@ PY
           fi
 
           python3 - <<'PY'
-from pathlib import Path
-p = Path('app/build.gradle')
-s = p.read_text()
-version_name = '${{ steps.version.outputs.version }}'
-version_code = '${{ steps.version.outputs.version_code }}'
-if 'signingConfigs {' in s:
-    raise SystemExit('Unexpected existing signingConfigs; inspect generated Capacitor project before release')
-insert = '''android {\n    signingConfigs {\n        release {\n            storeFile file(System.getenv("ANDROID_KEYSTORE_FILE"))\n            storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")\n            keyAlias System.getenv("ANDROID_KEY_ALIAS")\n            keyPassword System.getenv("ANDROID_KEY_PASSWORD")\n        }\n    }'''
-s = s.replace('android {', insert, 1)
-s = s.replace('versionCode 1', f'versionCode {version_code}', 1)
-s = s.replace('versionName "1.0"', f'versionName "{version_name}"', 1)
-s = s.replace('buildTypes {\n        release {', 'buildTypes {\n        release {\n            signingConfig signingConfigs.release', 1)
-p.write_text(s)
-PY
+          from pathlib import Path
+          p = Path('app/build.gradle')
+          s = p.read_text()
+          version_name = '${{ steps.version.outputs.version }}'
+          version_code = '${{ steps.version.outputs.version_code }}'
+          if 'signingConfigs {' in s:
+              raise SystemExit('Unexpected existing signingConfigs; inspect generated Capacitor project before release')
+          insert = '''android {\n    signingConfigs {\n        release {\n            storeFile file(System.getenv("ANDROID_KEYSTORE_FILE"))\n            storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")\n            keyAlias System.getenv("ANDROID_KEY_ALIAS")\n            keyPassword System.getenv("ANDROID_KEY_PASSWORD")\n        }\n    }'''
+          s = s.replace('android {', insert, 1)
+          s = s.replace('versionCode 1', f'versionCode {version_code}', 1)
+          s = s.replace('versionName "1.0"', f'versionName "{version_name}"', 1)
+          s = s.replace('buildTypes {\n        release {', 'buildTypes {\n        release {\n            signingConfig signingConfigs.release', 1)
+          p.write_text(s)
+          PY
 
       - name: Decode Android keystore
         working-directory: apps/web/android
