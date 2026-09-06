@@ -1,0 +1,47 @@
+import Fastify from 'fastify';
+import cors from '@fastify/cors';
+import { Server } from 'socket.io';
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import { db } from './db.js';
+
+const app = Fastify({ logger: true });
+const configuredOrigin = process.env.WEB_ORIGIN?.trim();
+const corsOrigin = configuredOrigin || true;
+await app.register(cors, { origin: corsOrigin });
+
+const secret = process.env.SESSION_SECRET?.trim();
+if (!secret) throw new Error('SESSION_SECRET is required');
+function sign(payload:string){return createHmac('sha256',secret).update(payload).digest('hex')}
+function verifyToken(token:string){try{const [payload,signature]=token.split('.');if(!payload||!signature)return null;const expected=sign(payload);if(signature.length!==expected.length||!timingSafeEqual(Buffer.from(signature),Buffer.from(expected)))return null;const data=JSON.parse(Buffer.from(payload,'base64url').toString('utf8'));if(!data.userId||!data.issuedAt||Date.now()-data.issuedAt>30*24*60*60*1000)return null;return String(data.userId)}catch{return null}}
+function bearer(req:any){const h=String(req.headers.authorization||'');return h.startsWith('Bearer ')?verifyToken(h.slice(7)):null}
+function participants(chatId:string){return chatId.split(':')}
+const sockets=new Map<string,string>();
+const userSockets=new Map<string,Set<string>>();
+const addSocket=(uid:string,sid:string)=>{sockets.set(sid,uid);if(!userSockets.has(uid))userSockets.set(uid,new Set());userSockets.get(uid)!.add(sid)};
+const removeSocket=(uid:string,sid:string)=>{sockets.delete(sid);const set=userSockets.get(uid);if(set){set.delete(sid);if(!set.size)userSockets.delete(uid)}};
+
+app.get('/health',async()=>({ok:true,service:'pro-chat-realtime'}));
+app.get('/api/stats',async(req:any,reply)=>{const uid=bearer(req);if(!uid)return reply.code(401).send({error:'Authentication required'});const sent=await db.query('SELECT COUNT(*)::int AS count FROM pro_chat_messages WHERE sender_id=$1',[uid]);const unread=await db.query('SELECT COUNT(*)::int AS count FROM pro_chat_messages WHERE sender_id<>$1 AND read=false',[uid]);return {messagesSent:Number(sent.rows[0]?.count||0),unreadMessages:Number(unread.rows[0]?.count||0)}});
+
+const io=new Server(app.server,{cors:{origin:corsOrigin,methods:['GET','POST']},maxHttpBufferSize:256*1024});
+io.use((socket,next)=>{const uid=verifyToken(String(socket.handshake.auth?.token||''));if(!uid)return next(new Error('Authentication required'));socket.data.userId=uid;next()});
+const sendUser=(uid:string,event:string,payload:any)=>{for(const sid of userSockets.get(uid)||[])io.to(sid).emit(event,payload)};
+const validChat=(chatId:string,uid:string)=>{const p=participants(chatId);return p.length===2&&p.includes(uid)};
+
+io.on('connection',socket=>{
+ const uid=String(socket.data.userId);addSocket(uid,socket.id);void db.query('UPDATE pro_chat_users SET online=true WHERE id=$1',[uid]);io.emit('presence:update',{userId:uid,online:true});
+ socket.on('chat:join',(chatId:string)=>{if(validChat(String(chatId),uid))socket.join(`chat:${chatId}`)});
+ socket.on('typing:start',(p:any)=>{const chatId=String(p?.chatId||'');if(!validChat(chatId,uid))return;const other=participants(chatId).find(x=>x!==uid);if(other)sendUser(other,'typing:update',{chatId,userId:uid,typing:true})});
+ socket.on('typing:stop',(p:any)=>{const chatId=String(p?.chatId||'');if(!validChat(chatId,uid))return;const other=participants(chatId).find(x=>x!==uid);if(other)sendUser(other,'typing:update',{chatId,userId:uid,typing:false})});
+ socket.on('call:start',(p:any)=>{const chatId=String(p?.chatId||'');if(!validChat(chatId,uid))return;const other=participants(chatId).find(x=>x!==uid);if(!other)return;const callId=String(p?.callId||crypto.randomUUID());const video=Boolean(p?.video);if(!userSockets.has(other)){socket.emit('call:unavailable',{callId,reason:'offline'});return}sendUser(other,'call:incoming',{callId,chatId,video,callerId:uid,username:String(p?.username||'contact')});socket.emit('call:started',{callId,chatId,video})});
+ const relay=(event:string,targetEvent=event)=>(p:any)=>{const chatId=String(p?.chatId||'');if(!validChat(chatId,uid))return;const other=participants(chatId).find(x=>x!==uid);if(other)sendUser(other,targetEvent,{...p,from:uid})};
+ socket.on('call:offer',relay('call:offer'));
+ socket.on('call:answer',relay('call:answer'));
+ socket.on('call:ice',relay('call:ice'));
+ socket.on('call:reject',relay('call:reject'));
+ socket.on('call:end',relay('call:end'));
+ socket.on('disconnect',()=>{removeSocket(uid,socket.id);if(!userSockets.has(uid)){void db.query('UPDATE pro_chat_users SET online=false WHERE id=$1',[uid]);io.emit('presence:update',{userId:uid,online:false})}});
+});
+
+const port=Number(process.env.REALTIME_PORT||3001);
+await app.listen({host:'0.0.0.0',port});
