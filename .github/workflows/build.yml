@@ -42,7 +42,7 @@ jobs:
           fi
       - run: npm install
       - run: npm run build -w apps/web
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: pro-chat-web
           path: apps/web/dist
@@ -87,7 +87,7 @@ jobs:
       - name: Build Android debug APK
         working-directory: apps/web/android
         run: chmod +x ./gradlew && ./gradlew assembleDebug --no-daemon
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: pro-chat-android-debug
           path: apps/web/android/app/build/outputs/apk/debug/app-debug.apk
