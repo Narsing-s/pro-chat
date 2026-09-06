@@ -10,27 +10,40 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy from GitHub to Koyeb
+      - name: Install and configure Koyeb CLI
+        uses: koyeb-community/koyeb-actions@v2
+        with:
+          api_token: ${{ secrets.KOYEB_API_TOKEN }}
+
+      - name: Create DATABASE_URL secret in Koyeb
+        uses: koyeb/action-git-deploy/secret@v1
+        with:
+          secret-name: PRO_CHAT_DATABASE_URL
+          secret-value: ${{ secrets.PRO_CHAT_DATABASE_URL }}
+
+      - name: Create SESSION_SECRET secret in Koyeb
+        uses: koyeb/action-git-deploy/secret@v1
+        with:
+          secret-name: PRO_CHAT_SESSION_SECRET
+          secret-value: ${{ secrets.PRO_CHAT_SESSION_SECRET }}
+
+      - name: Create WEB_ORIGIN secret in Koyeb
+        uses: koyeb/action-git-deploy/secret@v1
+        with:
+          secret-name: PRO_CHAT_WEB_ORIGIN
+          secret-value: ${{ secrets.PRO_CHAT_WEB_ORIGIN }}
+
+      - name: Build and deploy Pro Chat API
         uses: koyeb/action-git-deploy@v1
         with:
-          api-token: ${{ secrets.KOYEB_API_TOKEN }}
           app-name: pro-chat
           service-name: api
           git-url: github.com/Narsing-s/pro-chat
           git-branch: main
           git-builder: docker
           git-docker-dockerfile: apps/server/Dockerfile.koyeb
-          ports: 3000:http
-          routes: /:3000
-          instance-type: free
-          env: |
-            NODE_ENV=production
-            HOST=0.0.0.0
-            PORT=3000
-            DATABASE_URL=${{ secrets.PRO_CHAT_DATABASE_URL }}
-            SESSION_SECRET=${{ secrets.PRO_CHAT_SESSION_SECRET }}
-            WEB_ORIGIN=${{ secrets.PRO_CHAT_WEB_ORIGIN }}
-            WEBAUTHN_RP_NAME=Pro Chat
-            REQUIRE_EMAIL_VERIFICATION=false
-            REQUIRE_PHONE_VERIFICATION=false
-            REQUIRE_DEVICE_APPROVAL=false
+          service-instance-type: free
+          service-ports: "3000:http"
+          service-routes: "/:3000"
+          service-checks: "3000:http:/health"
+          service-env: "NODE_ENV=production,HOST=0.0.0.0,PORT=3000,DATABASE_URL=@PRO_CHAT_DATABASE_URL,SESSION_SECRET=@PRO_CHAT_SESSION_SECRET,WEB_ORIGIN=@PRO_CHAT_WEB_ORIGIN,WEBAUTHN_RP_NAME=Pro Chat,REQUIRE_EMAIL_VERIFICATION=false,REQUIRE_PHONE_VERIFICATION=false,REQUIRE_DEVICE_APPROVAL=false"
