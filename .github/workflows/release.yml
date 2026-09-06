@@ -1,0 +1,197 @@
+name: Pro Chat Android Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version, for example 1.0.1'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: pro-chat-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid version: $VERSION"
+            exit 1
+          fi
+          VERSION_CODE=$(python3 - <<'PY' "$VERSION"
+import sys
+major, minor, patch = map(int, sys.argv[1].split('.'))
+code = major * 1000000 + minor * 1000 + patch
+if code < 1 or code > 2100000000:
+    raise SystemExit('Version code out of Android integer range')
+print(code)
+PY
+)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+
+      - name: Validate release secrets
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for pair in \
+            "ANDROID_KEYSTORE_BASE64=$KEYSTORE" \
+            "ANDROID_KEYSTORE_PASSWORD=$STORE_PASSWORD" \
+            "ANDROID_KEY_ALIAS=$KEY_ALIAS" \
+            "ANDROID_KEY_PASSWORD=$KEY_PASSWORD"; do
+            name="${pair%%=*}"
+            value="${pair#*=}"
+            if [[ -z "$value" ]]; then
+              echo "Missing production secret: $name"
+              missing=1
+            fi
+          done
+          if [[ "$missing" -ne 0 ]]; then
+            echo "Configure the four Android signing secrets in the production environment before creating a release."
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build web
+        run: npm run build -w apps/web
+
+      - name: Add Android platform
+        working-directory: apps/web
+        run: npx cap add android
+
+      - name: Sync Android
+        working-directory: apps/web
+        run: npx cap sync android
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Configure Android production build
+        working-directory: apps/web/android
+        env:
+          VERSION_NAME: ${{ steps.version.outputs.version }}
+          VERSION_CODE: ${{ steps.version.outputs.version_code }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f variables.gradle ]]; then
+            sed -i -E 's/(compileSdkVersion[[:space:]]*=)[[:space:]]*[0-9]+/\1 36/; s/(targetSdkVersion[[:space:]]*=)[[:space:]]*[0-9]+/\1 36/' variables.gradle
+          fi
+
+          python3 - <<'PY'
+from pathlib import Path
+p = Path('app/build.gradle')
+s = p.read_text()
+version_name = '${{ steps.version.outputs.version }}'
+version_code = '${{ steps.version.outputs.version_code }}'
+if 'signingConfigs {' not in s:
+    marker = 'android {'
+    insert = '''android {\n    signingConfigs {\n        release {\n            storeFile file(System.getenv("ANDROID_KEYSTORE_FILE"))\n            storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")\n            keyAlias System.getenv("ANDROID_KEY_ALIAS")\n            keyPassword System.getenv("ANDROID_KEY_PASSWORD")\n        }\n    }'''
+    s = s.replace(marker, insert, 1)
+else:
+    raise SystemExit('Unexpected existing signingConfigs; inspect generated Capacitor project before release')
+s = s.replace('versionCode 1', f'versionCode {version_code}', 1)
+s = s.replace('versionName "1.0"', f'versionName "{version_name}"', 1)
+s = s.replace('buildTypes {', 'buildTypes {', 1)
+s = s.replace('release {', 'release {\n            signingConfig signingConfigs.release', 1)
+p.write_text(s)
+PY
+
+      - name: Decode Android keystore
+        working-directory: apps/web/android
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > pro-chat-release.keystore
+          chmod 600 pro-chat-release.keystore
+          echo "ANDROID_KEYSTORE_FILE=$PWD/pro-chat-release.keystore" >> "$GITHUB_ENV"
+
+      - name: Build signed AAB and APK
+        working-directory: apps/web/android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew bundleRelease assembleRelease --no-daemon
+
+      - name: Generate checksums
+        working-directory: apps/web/android
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum app/build/outputs/bundle/release/app-release.aab > app/build/outputs/bundle/release/app-release.aab.sha256
+          sha256sum app/build/outputs/apk/release/app-release.apk > app/build/outputs/apk/release/app-release.apk.sha256
+
+      - name: Attest AAB provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: apps/web/android/app/build/outputs/bundle/release/app-release.aab
+
+      - name: Attest APK provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: apps/web/android/app/build/outputs/apk/release/app-release.apk
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            TAG="$GITHUB_REF_NAME"
+          else
+            TAG="v$VERSION"
+          fi
+          gh release create "$TAG" \
+            apps/web/android/app/build/outputs/bundle/release/app-release.aab \
+            apps/web/android/app/build/outputs/bundle/release/app-release.aab.sha256 \
+            apps/web/android/app/build/outputs/apk/release/app-release.apk \
+            apps/web/android/app/build/outputs/apk/release/app-release.apk.sha256 \
+            --title "Pro Chat $VERSION" \
+            --generate-notes
