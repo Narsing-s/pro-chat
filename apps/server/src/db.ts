@@ -193,6 +193,30 @@ export async function initDb() {
     CREATE TABLE IF NOT EXISTS pro_chat_groups(id TEXT PRIMARY KEY,name TEXT NOT NULL,description TEXT,created_by TEXT NOT NULL REFERENCES pro_chat_users(id),created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
     CREATE TABLE IF NOT EXISTS pro_chat_group_members(group_id TEXT NOT NULL REFERENCES pro_chat_groups(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES pro_chat_users(id) ON DELETE CASCADE,role TEXT NOT NULL DEFAULT 'member',created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),PRIMARY KEY(group_id,user_id));
     CREATE INDEX IF NOT EXISTS pro_chat_group_members_user_idx ON pro_chat_group_members(user_id);
+
+    CREATE TABLE IF NOT EXISTS pro_chat_support_tickets(
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES pro_chat_users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      email TEXT,
+      subject TEXT NOT NULL,
+      details TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS pro_chat_support_tickets_user_idx ON pro_chat_support_tickets(user_id,created_at DESC);
+    CREATE INDEX IF NOT EXISTS pro_chat_support_tickets_status_idx ON pro_chat_support_tickets(status,updated_at DESC);
+
+    CREATE TABLE IF NOT EXISTS pro_chat_support_messages(
+      id TEXT PRIMARY KEY,
+      ticket_id TEXT NOT NULL REFERENCES pro_chat_support_tickets(id) ON DELETE CASCADE,
+      sender_type TEXT NOT NULL DEFAULT 'user',
+      sender_user_id TEXT REFERENCES pro_chat_users(id) ON DELETE SET NULL,
+      body TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS pro_chat_support_messages_ticket_idx ON pro_chat_support_messages(ticket_id,created_at);
   `);
 }
 export async function closeDb(){ await db.end(); }
