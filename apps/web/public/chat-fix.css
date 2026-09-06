@@ -1,1 +1,12 @@
-.conversation{height:100%;min-height:0;display:flex!important;flex-direction:column!important;overflow:hidden!important}.conversation>.chat-header{flex:0 0 auto}.conversation>.chat-search{flex:0 0 auto}.conversation>.message-area{flex:1 1 auto!important;min-height:0!important;overflow-y:auto!important;overflow-x:hidden!important}.conversation>.composer-wrap{position:sticky!important;bottom:0!important;z-index:25!important;flex:0 0 auto!important;margin-top:auto!important;background:#fff!important;box-shadow:0 -4px 14px rgba(20,36,43,.06)}.composer-wrap .composer{min-height:58px}.composer-wrap .emoji-picker,.composer-wrap .attachment-menu{bottom:64px!important}
+/* Pro Chat conversation layout: header top, messages scroll in the middle, composer stays at the bottom. */
+html,body,#root{height:100%;min-height:100%}
+.app-shell{height:100%;min-height:100%;overflow:hidden}
+.chat-panel{height:100%;min-height:0;overflow:hidden}
+.conversation{height:100%;min-height:0;display:flex!important;flex-direction:column!important;overflow:hidden!important}
+.conversation>.chat-header{flex:0 0 auto!important;order:1!important}
+.conversation>.chat-search{flex:0 0 auto!important;order:2!important}
+.conversation>.message-area{flex:1 1 auto!important;min-height:0!important;height:auto!important;overflow-y:auto!important;overflow-x:hidden!important;order:3!important;overscroll-behavior:contain}
+.conversation>.composer-wrap{flex:0 0 auto!important;min-height:0!important;height:auto!important;margin-top:auto!important;position:relative!important;inset:auto!important;bottom:auto!important;top:auto!important;order:4!important;z-index:25!important;visibility:visible!important;transform:none!important;background:#fff!important;box-shadow:0 -4px 14px rgba(20,36,43,.06)}
+.conversation>.composer-wrap .composer{position:relative!important;inset:auto!important;min-height:58px}
+.composer-wrap .emoji-picker,.composer-wrap .attachment-menu{bottom:64px!important}
+@media(max-width:760px){.app-shell,.chat-panel,.conversation{height:100dvh;min-height:100dvh}.conversation>.message-area{padding-bottom:8px!important}.conversation>.composer-wrap{padding-bottom:calc(8px + env(safe-area-inset-bottom))!important}}
