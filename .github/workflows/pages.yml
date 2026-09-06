@@ -5,18 +5,18 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Default to read-only. The deployment job gets the Pages permissions it needs.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       VITE_API_URL: ${{ vars.PRO_CHAT_API_URL }}
     steps:
@@ -24,6 +24,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+          cache: npm
+          package-manager-cache: false
       - name: Write public API runtime config
         run: |
           if [ -n "$VITE_API_URL" ]; then
@@ -38,10 +40,15 @@ jobs:
           path: apps/web/dist
 
   deploy:
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: build
     steps:
       - id: deployment
