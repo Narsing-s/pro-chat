@@ -1,0 +1,20 @@
+import React,{useEffect,useMemo,useState} from 'react';
+import {createRoot} from 'react-dom/client';
+import {io} from 'socket.io-client';
+import {MessageCircle,Search,Plus,Send,Wifi,WifiOff,Phone,Video,MoreVertical,CheckCheck} from 'lucide-react';
+import './styles.css';
+
+const API=import.meta.env.VITE_API_URL||'http://localhost:3000';
+const KEY='pro-chat-local-v1';
+const starter=[{id:'welcome',name:'Pro Chat',text:'Your messages stay available offline. Connect a server when you want realtime delivery.',time:'Now',online:true}];
+function load(){try{return JSON.parse(localStorage.getItem(KEY))||starter}catch{return starter}}
+function App(){
+ const [chats,setChats]=useState(load),[active,setActive]=useState('welcome'),[text,setText]=useState(''),[online,setOnline]=useState(false),[search,setSearch]=useState('');
+ const [messages,setMessages]=useState(()=>JSON.parse(localStorage.getItem(KEY+'-messages')||'{}'));
+ const socket=useMemo(()=>io(API,{autoConnect:false,reconnection:true,reconnectionAttempts:Infinity}),[]);
+ useEffect(()=>{const up=()=>setOnline(true),down=()=>setOnline(false);socket.on('connect',up);socket.on('disconnect',down);socket.on('message:new',m=>{setMessages(x=>{const n={...x,[m.chatId]:[...(x[m.chatId]||[]),m]};localStorage.setItem(KEY+'-messages',JSON.stringify(n));return n})});socket.connect();return()=>socket.disconnect()},[]);
+ useEffect(()=>localStorage.setItem(KEY,JSON.stringify(chats)),[chats]);
+ const current=chats.find(c=>c.id===active)||chats[0]; const list=chats.filter(c=>c.name.toLowerCase().includes(search.toLowerCase())); const rows=messages[active]||[];
+ function send(){const value=text.trim();if(!value)return;const m={id:crypto.randomUUID(),chatId:active,text:value,time:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),from:'me',delivered:online};setMessages(x=>{const n={...x,[active]:[...(x[active]||[]),m]};localStorage.setItem(KEY+'-messages',JSON.stringify(n));return n});setChats(x=>x.map(c=>c.id===active?{...c,text:value,time:m.time}:c));if(online)socket.emit('message:send',m);setText('')}
+ return <div className="app"><aside><div className="brand"><div className="logo">P</div><div><b>Pro Chat</b><small>Private messenger</small></div></div><div className="search"><Search size={17}/><input placeholder="Search chats" value={search} onChange={e=>setSearch(e.target.value)}/></div><div className="section">CHATS <button><Plus size={16}/></button></div><div className="chat-list">{list.map(c=><button className={'chat '+(c.id===active?'active':'')} onClick={()=>setActive(c.id)} key={c.id}><div className="avatar">{c.name[0]}</div><div className="meta"><b>{c.name}</b><span>{c.text}</span></div><time>{c.time}</time></button>)}</div><div className="connection">{online?<><Wifi size={15}/> Realtime connected</>:<><WifiOff size={15}/> Offline mode</>}</div></aside><main><header><div className="peer"><div className="avatar">{current.name[0]}</div><div><b>{current.name}</b><span>{online?'online • realtime':'offline • local mode'}</span></div></div><div className="actions"><button><Phone/></button><button><Video/></button><button><MoreVertical/></button></div></header><section className="messages">{rows.length===0&&<div className="empty"><div className="empty-icon"><MessageCircle/></div><h2>Start a conversation</h2><p>Messages are saved locally first and sync when realtime connectivity is available.</p></div>}{rows.map(m=><div className={'bubble-row '+(m.from==='me'?'mine':'')} key={m.id}><div className="bubble">{m.text}<small>{m.time} {m.from==='me'&&<CheckCheck className={m.delivered?'delivered':''} size={14}/>}</small></div></div>)}</section><footer><input value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>e.key==='Enter'&&send()} placeholder="Write a message…"/><button className="send" onClick={send}><Send size={19}/></button></footer></main></div>}
+createRoot(document.getElementById('root')).render(<App/>);
