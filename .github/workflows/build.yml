@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   VITE_API_URL: ${{ vars.PRO_CHAT_API_URL }}
@@ -16,6 +16,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Repair message SQL template if needed
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('apps/server/src/server.ts')
+          s=p.read_text(encoding='utf-8')
+          bad='forwardedFrom"'+',[id,chatId'
+          good='forwardedFrom"`'+',[id,chatId'
+          if bad in s:
+              p.write_text(s.replace(bad,good,1),encoding='utf-8')
+          PY
+          if ! git diff --quiet -- apps/server/src/server.ts; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add apps/server/src/server.ts
+            git commit -m "fix: close message send SQL template literal"
+            git push origin main
+          fi
       - uses: actions/setup-node@v7
         with:
           node-version: 22
