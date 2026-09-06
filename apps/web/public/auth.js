@@ -1,8 +1,10 @@
 (() => {
 const USER_KEY='pro-chat-user-v3';
-const isLocal=['localhost','127.0.0.1','0.0.0.0'].includes(location.hostname);
+const isLocalHost=['localhost','127.0.0.1','0.0.0.0'].includes(location.hostname);
+const isViteDev=location.port==='5173'||location.port==='4173';
 const configuredApi=window.__PRO_CHAT_API__||'';
-const API=configuredApi||(isLocal?'http://localhost:3000':location.origin);
+const localApiHost=location.hostname==='0.0.0.0'?'localhost':location.hostname;
+const API=configuredApi||(isLocalHost||isViteDev?`http://${localApiHost}:3000`:location.origin);
 const originalFetch=window.fetch.bind(window);
 const request=async(path,body)=>{let response;try{response=await originalFetch(`${API}${path}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),cache:'no-store'})}catch{throw Error('SERVER_UNAVAILABLE')}const data=await response.json().catch(()=>({}));if(!response.ok){const error=Error(data.error||`Request failed (${response.status})`);error.status=response.status;throw error}return data};
 const saveUser=user=>{if(!user?.id||!user?.token)throw Error('Invalid account session.');localStorage.setItem(USER_KEY,JSON.stringify(user));location.replace(location.pathname)};
