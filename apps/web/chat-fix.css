@@ -1,0 +1,11 @@
+/* Pro Chat conversation stability fixes */
+.chat-shell,.chat-view,.conversation,.message-panel{min-height:0!important}
+.message-area{position:relative!important;overflow-y:auto!important;overscroll-behavior:contain!important;scrollbar-gutter:stable}
+.composer-wrap{position:sticky!important;bottom:0!important;z-index:30!important;background:var(--panel,#fff)!important;padding:8px 10px calc(8px + env(safe-area-inset-bottom))!important;border-top:1px solid rgba(120,140,145,.18)!important}
+.composer{display:flex!important;align-items:center!important;gap:7px!important;min-height:48px!important;width:100%!important}
+.composer input,.composer textarea{display:block!important;visibility:visible!important;opacity:1!important;flex:1 1 auto!important;min-width:0!important;height:42px!important;box-sizing:border-box!important;padding:10px 13px!important;border:1px solid #d5dfdd!important;border-radius:22px!important;background:#f7faf9!important;color:#17212b!important;outline:none!important}
+.composer input:focus,.composer textarea:focus{border-color:#0a8f7c!important;box-shadow:0 0 0 3px rgba(10,143,124,.10)!important}
+.composer button{flex:0 0 auto!important}
+.message-area .typing-indicator{bottom:78px!important}
+.chat-row,.chat-list-item{min-height:62px!important}
+@media(max-width:640px){.composer-wrap{padding-left:7px!important;padding-right:7px!important}.composer{gap:4px!important}.composer input,.composer textarea{height:44px!important}.composer>button{min-width:38px!important}}
