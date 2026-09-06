@@ -1,1 +1,13 @@
-{"name":"Pro Chat","short_name":"Pro Chat","start_url":"/","display":"standalone","background_color":"#080a12","theme_color":"#090b14","description":"Private offline-first messenger"}
+{
+  "name":"Pro Chat — Global Messenger",
+  "short_name":"Pro Chat",
+  "start_url":"./",
+  "scope":"./",
+  "display":"standalone",
+  "orientation":"any",
+  "background_color":"#080a12",
+  "theme_color":"#075e54",
+  "description":"Private global messaging for web, Android, iPhone, Windows and Mac.",
+  "categories":["social","communication"],
+  "prefer_related_applications":false
+}
